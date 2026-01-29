@@ -6,6 +6,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "mainwindow.h"
 #include "assets/assetpanel.hpp"
+#include "assets/keyframes/model/dopesheetmodel.hpp"
 #include "audiomixer/mixermanager.hpp"
 #include "bin/clipcreator.hpp"
 #include "bin/generators/generators.h"
@@ -38,6 +39,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include "library/librarywidget.h"
 #include "render/renderserver.h"
 #include <KEditToolBar>
+#include <qquickitem.h>
 
 #ifndef NODBUS
 #include <QDBusConnectionInterface>
@@ -5601,7 +5603,8 @@ void MainWindow::connectTimeline()
     }
     // Dopesheet
     QList<QQmlContext::PropertyPair> propertyList = {{"timeline", QVariant::fromValue(getCurrentTimeline()->controller())},
-                                                     {"miniFontSize", QVariant::fromValue(QFontInfo(font()).pixelSize())}};
+                                                     {"miniFontSize", QVariant::fromValue(QFontInfo(font()).pixelSize())},
+                                                     {"proxy", QVariant::fromValue(m_projectMonitor->getControllerProxy())}};
     m_dopeWidget->rootContext()->setContextProperties(propertyList);
     // Display timeline guides in the guides list
     pCore->guidesList()->setModel(project->getGuideModel(uuid), project->getFilteredGuideModel(uuid));
@@ -5610,6 +5613,13 @@ void MainWindow::connectTimeline()
         m_renderWidget->setGuides(project->getGuideModel(uuid));
         m_renderWidget->showRenderDuration();
     }
+}
+
+void MainWindow::registerDopeStack(std::shared_ptr<EffectStackModel> model)
+{
+    pCore->dopeSheetModel()->registerStack(model);
+    m_dopeWidget->rootObject()->setProperty("frameDuration", pCore->getItemDuration(model->getOwnerId()));
+    m_dopeWidget->rootObject()->setProperty("offset", pCore->getItemPosition(model->getOwnerId()));
 }
 
 void MainWindow::disconnectTimeline(TimelineWidget *timeline, bool onClose)

@@ -15,6 +15,7 @@
 #include "effects/effectstack/model/effectstackfilter.hpp"
 #include "effects/effectstack/model/effectstackmodel.hpp"
 #include "kdenlivesettings.h"
+#include "mainwindow.h"
 #include "monitor/monitor.h"
 #include "timeline2/model/timelinemodel.hpp"
 #include "utils/qstringutils.h"
@@ -475,7 +476,7 @@ void EffectStackView::loadEffects()
         view->buttonUp->setEnabled(i > 0);
         view->buttonDown->setEnabled(i < max - 1);
     }
-    pCore->dopeSheetModel()->registerStack(m_model);
+    pCore->window()->registerDopeStack(m_model);
     lock.unlock();
     if (activeIndex.isValid()) {
         m_effectsTree->setCurrentIndex(activeIndex);

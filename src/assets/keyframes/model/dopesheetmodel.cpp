@@ -124,6 +124,7 @@ void DopeSheetModel::registerStack(std::shared_ptr<EffectStackModel> model)
         m_paramsList.clear();
         clear();
     }
+
     int max = model->rowCount();
     for (int i = 0; i < max; i++) {
         std::shared_ptr<AbstractEffectItem> item = model->getEffectStackRow(i);

@@ -216,6 +216,8 @@ public:
     bool hasRunningTask() const;
     /** @brief If a render task is running */
     bool hasRunningRenderTask() const;
+    /** @brief Set the effect stack for the dopesheet model */
+    void registerDopeStack(std::shared_ptr<EffectStackModel> model);
 
 protected:
     /** @brief Closes the window.

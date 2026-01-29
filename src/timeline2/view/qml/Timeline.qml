@@ -1678,6 +1678,7 @@ function getTrackColor(audio, header) {
                         id: ruler
                         width: rulercontainer.contentWidth
                         height: parent.height
+                        scalingFactor: timeline.scaleFactor
                         K.TimelinePlayhead {
                             id: playhead
                             height: Math.round(root.baseUnit * .8)

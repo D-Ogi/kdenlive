@@ -30,6 +30,7 @@ class EffectItemModel;
 class DopeSheetModel : public AbstractTreeModel
 {
     Q_OBJECT
+
 protected:
     explicit DopeSheetModel(QObject *parent = nullptr);
 
