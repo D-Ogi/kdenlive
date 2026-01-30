@@ -1,50 +1,41 @@
 ![](data/pics/kdenlive-logo.png)
 
-# Kdenlive
+# Kdenlive — D-Bus Scripting Fork
 
-Kdenlive is a powerful, free and open-source video editor that brings professional-grade video editing capabilities to everyone. Whether you're creating a simple family video or working on a complex project, Kdenlive provides the tools you need to bring your vision to life.
+Fork of [KDE/kdenlive](https://github.com/KDE/kdenlive) that adds a **D-Bus scripting API** (`org.kde.kdenlive.scripting`) for programmatic control of Kdenlive from Python, CLI, or any D-Bus client.
 
-For more information about Kdenlive's features, tutorials, and community, please visit our [official website](https://kdenlive.org).
+## What this fork adds
 
-There you can also find downloads for both stable releases and experimental daily builds for Kdenlive.
+One commit on top of upstream Kdenlive, exposing ~40 `Q_SCRIPTABLE` methods via D-Bus:
 
-## Contributing to Kdenlive
+| Category | Methods |
+|----------|---------|
+| **Project** | Open, save, properties, fps, resolution |
+| **Media pool** | Import, folders, clip properties, delete |
+| **Timeline** | Insert/move/resize/delete clips, track management |
+| **Transitions** | Same-track mixes, cross-track compositions |
+| **Markers/guides** | Add, list, delete by frame or category |
+| **Playback** | Seek, play, pause, position |
 
-Kdenlive is a community-driven project, and we welcome contributions from everyone! There are many ways to contribute beyond coding:
+Changed files: `src/mainwindow.h`, `src/mainwindow.cpp`, `src/org.kdenlive.MainWindow.xml`
 
-- Help translate Kdenlive into your language
-- Report and triage bugs
-- Write documentation
-- Create tutorials
-- Help other users on forums and bug trackers
+## Python API
 
-Visit [kdenlive.org](https://kdenlive.org) to learn more about non-code contributions.
+Use with [kdenlive-api](https://github.com/D-Ogi/kdenlive-api) — a DaVinci Resolve-compatible Python wrapper:
 
-## Developer Information
+```python
+from kdenlive_api import Resolve
 
-### Technology Stack
+resolve = Resolve()
+project = resolve.GetProjectManager().GetCurrentProject()
+timeline = project.GetCurrentTimeline()
+```
 
-Kdenlive is written in C++ and is using these technologies and frameworks:
+## Building
 
-- **Core Framework**: MLT for video editing functionality
-- **GUI Framework**: Qt and KDE Frameworks 6
-- **Additional Libraries**: frei0r (video effects), LADSPA (audio effects)
+Follow the standard Kdenlive [build instructions](dev-docs/build.md). This fork tracks upstream `master` and should build identically — the only addition is the D-Bus interface.
 
-### Getting Started
+## Upstream
 
-1. Check out our [build instructions](dev-docs/build.md) to set up your development environment
-2. Familiarize yourself with the [architecture](dev-docs/architecture.md) and [coding guidelines](dev-docs/coding.md)
-4. If the MLT library is new to you check out [MLT Introduction](dev-docs/mlt-intro.md)
-3. Join our Matrix channel `#kdenlive-dev:kde.org` for developer discussions and support
-
-### Contributing Code
-
-Kdenlive's primary development happens on [KDE Invent](https://invent.kde.org/multimedia/kdenlive). While we maintain a GitHub mirror, all code contributions should be submitted through KDE's GitLab instance. For more information about KDE's development infrastructure, visit the [KDE GitLab documentation](https://community.kde.org/Infrastructure/GitLab).
-
-### Finding Things to Work On
-
-- Browse open issues on [KDE Invent](https://invent.kde.org/multimedia/kdenlive/-/issues)
-- Check the [KDE Bug Tracker](https://bugs.kde.org) for reported issues
-- Look for issues tagged with "good first issue" or "help wanted"
-
-Need help getting started? Join our Matrix channel `#kdenlive-dev:kde.org` - our community is friendly and always ready to help new contributors!
+For general Kdenlive information, features, and downloads visit [kdenlive.org](https://kdenlive.org).
+Upstream source: [KDE Invent](https://invent.kde.org/multimedia/kdenlive) / [GitHub mirror](https://github.com/KDE/kdenlive).
