@@ -368,6 +368,60 @@ private:
     EffectBasket *m_effectBasket{nullptr};
     QProgressDialog *m_loadingDialog{nullptr};
 
+    // ── Scripting API (D-Bus: org.kde.kdenlive.scripting) ──────────────
+public Q_SLOTS:
+    // Project Management
+    Q_SCRIPTABLE QString scriptNewProject(const QString &name);
+    Q_SCRIPTABLE bool scriptOpenProject(const QString &filePath);
+    Q_SCRIPTABLE bool scriptSaveProject();
+    Q_SCRIPTABLE bool scriptSaveProjectAs(const QString &filePath);
+    Q_SCRIPTABLE QString scriptGetProjectName();
+    Q_SCRIPTABLE QString scriptGetProjectPath();
+    Q_SCRIPTABLE double scriptGetProjectFps();
+    Q_SCRIPTABLE int scriptGetProjectResolutionWidth();
+    Q_SCRIPTABLE int scriptGetProjectResolutionHeight();
+    Q_SCRIPTABLE QString scriptGetProjectProperty(const QString &key);
+    Q_SCRIPTABLE bool scriptSetProjectProperty(const QString &key, const QString &value);
+
+    // Media Pool (Bin)
+    Q_SCRIPTABLE QStringList scriptImportMedia(const QStringList &filePaths, const QString &folderId = QStringLiteral("-1"));
+    Q_SCRIPTABLE QString scriptCreateFolder(const QString &name, const QString &parentId = QStringLiteral("-1"));
+    Q_SCRIPTABLE QStringList scriptGetAllClipIds();
+    Q_SCRIPTABLE QStringList scriptGetFolderClipIds(const QString &folderId);
+    Q_SCRIPTABLE QVariantMap scriptGetClipProperties(const QString &binId);
+    Q_SCRIPTABLE bool scriptDeleteBinClip(const QString &binId);
+
+    // Timeline
+    Q_SCRIPTABLE int scriptGetTrackCount(const QString &trackType);
+    Q_SCRIPTABLE QVariantMap scriptGetTrackInfo(int trackIndex);
+    Q_SCRIPTABLE QVariantList scriptGetAllTracksInfo();
+    Q_SCRIPTABLE int scriptAddTrack(const QString &name, bool audioTrack);
+    Q_SCRIPTABLE int scriptInsertClip(const QString &binClipId, int trackId, int position);
+    Q_SCRIPTABLE QVariantList scriptInsertClipsSequentially(const QStringList &binClipIds, int trackId, int startPosition);
+    Q_SCRIPTABLE bool scriptMoveClip(int clipId, int trackId, int position);
+    Q_SCRIPTABLE int scriptResizeClip(int clipId, int newDuration, bool fromRight);
+    Q_SCRIPTABLE bool scriptDeleteTimelineClip(int clipId);
+    Q_SCRIPTABLE QVariantList scriptGetClipsOnTrack(int trackId);
+    Q_SCRIPTABLE QVariantMap scriptGetTimelineClipInfo(int clipId);
+    Q_SCRIPTABLE bool scriptCutClip(int clipId, int position);
+
+    // Transitions & Mixes
+    Q_SCRIPTABLE bool scriptAddMix(int clipIdA, int clipIdB, int durationFrames);
+    Q_SCRIPTABLE int scriptAddComposition(const QString &transitionId, int trackId, int position, int duration);
+    Q_SCRIPTABLE bool scriptRemoveMix(int clipId);
+
+    // Markers & Guides
+    Q_SCRIPTABLE bool scriptAddGuide(int frame, const QString &comment, int category);
+    Q_SCRIPTABLE QVariantList scriptGetGuides();
+    Q_SCRIPTABLE bool scriptDeleteGuide(int frame);
+    Q_SCRIPTABLE bool scriptDeleteGuidesByCategory(int category);
+
+    // Playback & Monitor
+    Q_SCRIPTABLE void scriptSeek(int frame);
+    Q_SCRIPTABLE int scriptGetPosition();
+    Q_SCRIPTABLE void scriptPlay();
+    Q_SCRIPTABLE void scriptPause();
+
 public Q_SLOTS:
     void slotReloadEffects(const QStringList &paths);
     Q_SCRIPTABLE void setRenderingProgress(const QString &url, int progress, int frame);

@@ -65,9 +65,12 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include "project/dialogs/temporarydata.h"
 #include "project/projectmanager.h"
 #include "scopes/scopemanager.h"
+#include "timeline2/model/timelinefunctions.hpp"
+#include "timeline2/model/timelineitemmodel.hpp"
 #include "timeline2/view/timelinecontroller.h"
 #include "timeline2/view/timelinetabs.hpp"
 #include "timeline2/view/timelinewidget.h"
+#include "bin/model/markerlistmodel.hpp"
 #include "titler/titlewidget.h"
 #include "transitions/transitionlist/view/transitionlistwidget.hpp"
 #include "transitions/transitionsrepository.hpp"
@@ -2615,6 +2618,547 @@ void MainWindow::scriptRender(const QString &url)
     slotRenderProject();
     m_renderWidget->slotPrepareExport(true);
 }
+
+// ── Scripting API Implementation (D-Bus: org.kde.kdenlive.scripting) ────────
+
+// ── Project Management ─────────────────────────────────────────────────────
+
+QString MainWindow::scriptNewProject(const QString &name)
+{
+    Q_UNUSED(name)
+    // Kdenlive creates "untitled" projects; we trigger new file and return the name
+    pCore->projectManager()->newFile(false);
+    if (pCore->currentDoc()) {
+        return pCore->currentDoc()->url().fileName();
+    }
+    return QString();
+}
+
+bool MainWindow::scriptOpenProject(const QString &filePath)
+{
+    if (filePath.isEmpty()) return false;
+    pCore->projectManager()->openFile(QUrl::fromLocalFile(filePath));
+    return pCore->currentDoc() != nullptr;
+}
+
+bool MainWindow::scriptSaveProject()
+{
+    if (!pCore->currentDoc()) return false;
+    pCore->projectManager()->saveFile();
+    return true;
+}
+
+bool MainWindow::scriptSaveProjectAs(const QString &filePath)
+{
+    if (!pCore->currentDoc() || filePath.isEmpty()) return false;
+    pCore->projectManager()->saveFileAs(filePath);
+    return true;
+}
+
+QString MainWindow::scriptGetProjectName()
+{
+    if (!pCore->currentDoc()) return QString();
+    return pCore->currentDoc()->url().fileName();
+}
+
+QString MainWindow::scriptGetProjectPath()
+{
+    if (!pCore->currentDoc()) return QString();
+    return pCore->currentDoc()->url().toLocalFile();
+}
+
+double MainWindow::scriptGetProjectFps()
+{
+    return pCore->getCurrentFps();
+}
+
+int MainWindow::scriptGetProjectResolutionWidth()
+{
+    if (!pCore->currentDoc()) return 0;
+    return pCore->currentDoc()->width();
+}
+
+int MainWindow::scriptGetProjectResolutionHeight()
+{
+    if (!pCore->currentDoc()) return 0;
+    return pCore->currentDoc()->height();
+}
+
+QString MainWindow::scriptGetProjectProperty(const QString &key)
+{
+    if (!pCore->currentDoc()) return QString();
+    return pCore->currentDoc()->getDocumentProperty(key);
+}
+
+bool MainWindow::scriptSetProjectProperty(const QString &key, const QString &value)
+{
+    if (!pCore->currentDoc()) return false;
+    pCore->currentDoc()->setDocumentProperty(key, value);
+    return true;
+}
+
+// ── Media Pool (Bin) ───────────────────────────────────────────────────────
+
+QStringList MainWindow::scriptImportMedia(const QStringList &filePaths, const QString &folderId)
+{
+    QStringList binIds;
+    if (!pCore->currentDoc()) return binIds;
+
+    auto model = pCore->projectItemModel();
+    QString folder = folderId;
+    if (folder == QStringLiteral("-1")) {
+        folder = model->getRootFolder()->clipId();
+    }
+
+    for (const QString &path : filePaths) {
+        // Check if clip already exists in bin
+        QStringList existing = model->getClipByUrl(QFileInfo(path));
+        if (!existing.isEmpty()) {
+            binIds.append(existing.first());
+            continue;
+        }
+        // Import new clip
+        ClipCreator::createClipFromFile(path, folder, model);
+        // Retrieve the newly created bin ID
+        QStringList newIds = model->getClipByUrl(QFileInfo(path));
+        if (!newIds.isEmpty()) {
+            binIds.append(newIds.first());
+        }
+    }
+    return binIds;
+}
+
+QString MainWindow::scriptCreateFolder(const QString &name, const QString &parentId)
+{
+    if (!pCore->currentDoc()) return QString();
+
+    auto model = pCore->projectItemModel();
+    QString parent = parentId;
+    if (parent == QStringLiteral("-1")) {
+        parent = model->getRootFolder()->clipId();
+    }
+
+    QString newId;
+    Fun undo = []() { return true; };
+    Fun redo = []() { return true; };
+    if (model->requestAddFolder(newId, name, parent, undo, redo)) {
+        pCore->pushUndo(undo, redo, i18n("Create folder"));
+        return newId;
+    }
+    return QString();
+}
+
+QStringList MainWindow::scriptGetAllClipIds()
+{
+    QStringList result;
+    if (!pCore->currentDoc()) return result;
+
+    auto model = pCore->projectItemModel();
+    std::vector<QString> ids = model->getAllClipIds();
+    for (const QString &id : ids) {
+        result.append(id);
+    }
+    return result;
+}
+
+QStringList MainWindow::scriptGetFolderClipIds(const QString &folderId)
+{
+    QStringList result;
+    if (!pCore->currentDoc()) return result;
+
+    auto model = pCore->projectItemModel();
+    // Get folder and iterate its children
+    auto folder = model->getFolderByBinId(folderId);
+    if (!folder) return result;
+
+    int count = folder->childCount();
+    for (int i = 0; i < count; i++) {
+        auto child = std::static_pointer_cast<AbstractProjectItem>(folder->child(i));
+        if (child && child->itemType() == AbstractProjectItem::ClipItem) {
+            result.append(child->clipId());
+        }
+    }
+    return result;
+}
+
+QVariantMap MainWindow::scriptGetClipProperties(const QString &binId)
+{
+    QVariantMap props;
+    if (!pCore->currentDoc()) return props;
+
+    auto clip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (!clip) return props;
+
+    props[QStringLiteral("name")] = clip->clipName();
+    props[QStringLiteral("duration")] = clip->frameDuration();
+    props[QStringLiteral("type")] = static_cast<int>(clip->clipType());
+    props[QStringLiteral("url")] = clip->clipUrl();
+    props[QStringLiteral("id")] = binId;
+    return props;
+}
+
+bool MainWindow::scriptDeleteBinClip(const QString &binId)
+{
+    if (!pCore->currentDoc()) return false;
+
+    auto model = pCore->projectItemModel();
+    auto clip = model->getClipByBinID(binId);
+    if (!clip) return false;
+
+    Fun undo = []() { return true; };
+    Fun redo = []() { return true; };
+    bool result = model->requestBinClipDeletion(clip, undo, redo);
+    if (result) {
+        pCore->pushUndo(undo, redo, i18n("Delete clip"));
+    }
+    return result;
+}
+
+// ── Timeline ───────────────────────────────────────────────────────────────
+
+int MainWindow::scriptGetTrackCount(const QString &trackType)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return 0;
+
+    QPair<int, int> counts = timeline->model()->getAVtracksCount();
+    if (trackType == QStringLiteral("audio")) {
+        return counts.second;
+    }
+    return counts.first; // video
+}
+
+QVariantMap MainWindow::scriptGetTrackInfo(int trackIndex)
+{
+    QVariantMap info;
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return info;
+
+    auto model = timeline->model();
+    QList<int> trackIds = model->getTracksIds(false); // video
+    QList<int> audioIds = model->getTracksIds(true);  // audio
+    QList<int> allIds;
+    allIds.append(trackIds);
+    allIds.append(audioIds);
+
+    if (trackIndex < 0 || trackIndex >= allIds.size()) return info;
+
+    int trackId = allIds.at(trackIndex);
+    info[QStringLiteral("id")] = trackId;
+    info[QStringLiteral("name")] = model->getTrackTagById(trackId);
+    info[QStringLiteral("audio")] = model->isAudioTrack(trackId);
+    info[QStringLiteral("position")] = model->getTrackPosition(trackId);
+    return info;
+}
+
+QVariantList MainWindow::scriptGetAllTracksInfo()
+{
+    QVariantList result;
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return result;
+
+    auto model = timeline->model();
+    QList<int> videoIds = model->getTracksIds(false);
+    QList<int> audioIds = model->getTracksIds(true);
+
+    for (int trackId : videoIds) {
+        QVariantMap info;
+        info[QStringLiteral("id")] = trackId;
+        info[QStringLiteral("name")] = model->getTrackTagById(trackId);
+        info[QStringLiteral("audio")] = false;
+        info[QStringLiteral("position")] = model->getTrackPosition(trackId);
+        result.append(info);
+    }
+    for (int trackId : audioIds) {
+        QVariantMap info;
+        info[QStringLiteral("id")] = trackId;
+        info[QStringLiteral("name")] = model->getTrackTagById(trackId);
+        info[QStringLiteral("audio")] = true;
+        info[QStringLiteral("position")] = model->getTrackPosition(trackId);
+        result.append(info);
+    }
+    return result;
+}
+
+int MainWindow::scriptAddTrack(const QString &name, bool audioTrack)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return -1;
+
+    int newId = -1;
+    int pos = timeline->model()->getTracksCount();
+    bool success = timeline->model()->requestTrackInsertion(pos, newId, name, audioTrack);
+    return success ? newId : -1;
+}
+
+int MainWindow::scriptInsertClip(const QString &binClipId, int trackId, int position)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return -1;
+
+    int newClipId = -1;
+    bool success = timeline->model()->requestClipInsertion(
+        binClipId, trackId, position, newClipId,
+        true,   // logUndo
+        true,   // refreshView
+        false   // useTargets
+    );
+    return success ? newClipId : -1;
+}
+
+QVariantList MainWindow::scriptInsertClipsSequentially(const QStringList &binClipIds,
+                                                        int trackId, int startPosition)
+{
+    QVariantList result;
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return result;
+
+    int position = startPosition;
+    for (const QString &binId : binClipIds) {
+        int newClipId = -1;
+        bool success = timeline->model()->requestClipInsertion(
+            binId, trackId, position, newClipId,
+            true, true, false
+        );
+        if (success && newClipId >= 0) {
+            result.append(newClipId);
+            // Advance position by the clip's duration
+            int duration = timeline->model()->getClipPlaytime(newClipId);
+            position += duration;
+        } else {
+            result.append(-1);
+        }
+    }
+    return result;
+}
+
+bool MainWindow::scriptMoveClip(int clipId, int trackId, int position)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+
+    return timeline->model()->requestClipMove(clipId, trackId, position,
+                                               true,   // moveMirrorTracks
+                                               true,   // updateView
+                                               true);  // logUndo
+}
+
+int MainWindow::scriptResizeClip(int clipId, int newDuration, bool fromRight)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return -1;
+
+    return timeline->model()->requestItemResize(clipId, newDuration, fromRight, true);
+}
+
+bool MainWindow::scriptDeleteTimelineClip(int clipId)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+
+    return timeline->model()->requestItemDeletion(clipId, true);
+}
+
+QVariantList MainWindow::scriptGetClipsOnTrack(int trackId)
+{
+    QVariantList result;
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return result;
+
+    auto model = timeline->model();
+    // Get all clips in range [0, max) on this track
+    std::unordered_set<int> clipIds = model->getItemsInRange(trackId, 0, -1, false);
+    for (int cid : clipIds) {
+        if (!model->isClip(cid)) continue;
+        QVariantMap info;
+        info[QStringLiteral("id")] = cid;
+        info[QStringLiteral("position")] = model->getClipPosition(cid);
+        info[QStringLiteral("duration")] = model->getClipPlaytime(cid);
+        info[QStringLiteral("trackId")] = model->getClipTrackId(cid);
+        info[QStringLiteral("in")] = model->getClipIn(cid);
+        info[QStringLiteral("name")] = model->getClipBinId(cid);
+        result.append(info);
+    }
+    return result;
+}
+
+QVariantMap MainWindow::scriptGetTimelineClipInfo(int clipId)
+{
+    QVariantMap info;
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return info;
+
+    auto model = timeline->model();
+    if (!model->isClip(clipId)) return info;
+
+    info[QStringLiteral("id")] = clipId;
+    info[QStringLiteral("position")] = model->getClipPosition(clipId);
+    info[QStringLiteral("duration")] = model->getClipPlaytime(clipId);
+    info[QStringLiteral("trackId")] = model->getClipTrackId(clipId);
+    info[QStringLiteral("in")] = model->getClipIn(clipId);
+    info[QStringLiteral("binId")] = model->getClipBinId(clipId);
+    return info;
+}
+
+bool MainWindow::scriptCutClip(int clipId, int position)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+
+    return TimelineFunctions::requestClipCut(timeline->model(), clipId, position);
+}
+
+// ── Transitions & Mixes ───────────────────────────────────────────────────
+
+bool MainWindow::scriptAddMix(int clipIdA, int clipIdB, int durationFrames)
+{
+    Q_UNUSED(clipIdA)
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+
+    // Use the mix request — Kdenlive creates same-track mixes via the second clip
+    int trackId = timeline->model()->getClipTrackId(clipIdB);
+    int posB = timeline->model()->getClipPosition(clipIdB);
+    std::pair<int, int> clipIds = {clipIdA, clipIdB};
+    std::pair<int, int> mixDurations = {durationFrames / 2, durationFrames - durationFrames / 2};
+
+    Fun undo = []() { return true; };
+    Fun redo = []() { return true; };
+    bool success = timeline->model()->requestClipMix(
+        QStringLiteral("luma"), clipIds, mixDurations,
+        trackId, posB, true, true, true, undo, redo, false
+    );
+    if (success) {
+        pCore->pushUndo(undo, redo, i18n("Add mix"));
+    }
+    return success;
+}
+
+int MainWindow::scriptAddComposition(const QString &transitionId, int trackId,
+                                      int position, int duration)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return -1;
+
+    int newId = -1;
+    bool success = timeline->model()->requestCompositionInsertion(
+        transitionId, trackId, position, duration,
+        nullptr, newId, true
+    );
+    return success ? newId : -1;
+}
+
+bool MainWindow::scriptRemoveMix(int clipId)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+
+    return timeline->model()->requestItemDeletion(clipId, true);
+}
+
+// ── Markers & Guides ──────────────────────────────────────────────────────
+
+bool MainWindow::scriptAddGuide(int frame, const QString &comment, int category)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+
+    auto guideModel = timeline->model()->getGuideModel();
+    if (!guideModel) return false;
+
+    double fps = pCore->getCurrentFps();
+    GenTime pos(frame, fps);
+    return guideModel->addMarker(pos, comment, category);
+}
+
+QVariantList MainWindow::scriptGetGuides()
+{
+    QVariantList result;
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return result;
+
+    auto guideModel = timeline->model()->getGuideModel();
+    if (!guideModel) return result;
+
+    double fps = pCore->getCurrentFps();
+    // MarkerListModel stores markers sorted by GenTime
+    QList<CommentedTime> markers = guideModel->getAllMarkers();
+    for (const CommentedTime &marker : markers) {
+        QVariantMap m;
+        m[QStringLiteral("frame")] = marker.time().frames(fps);
+        m[QStringLiteral("comment")] = marker.comment();
+        m[QStringLiteral("category")] = marker.markerType();
+        result.append(m);
+    }
+    return result;
+}
+
+bool MainWindow::scriptDeleteGuide(int frame)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+
+    auto guideModel = timeline->model()->getGuideModel();
+    if (!guideModel) return false;
+
+    double fps = pCore->getCurrentFps();
+    GenTime pos(frame, fps);
+    return guideModel->removeMarker(pos);
+}
+
+bool MainWindow::scriptDeleteGuidesByCategory(int category)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+
+    auto guideModel = timeline->model()->getGuideModel();
+    if (!guideModel) return false;
+
+    double fps = pCore->getCurrentFps();
+    QList<CommentedTime> markers = guideModel->getAllMarkers();
+    bool anyDeleted = false;
+    for (const CommentedTime &marker : markers) {
+        if (marker.markerType() == category) {
+            if (guideModel->removeMarker(marker.time())) {
+                anyDeleted = true;
+            }
+        }
+    }
+    return anyDeleted;
+}
+
+// ── Playback & Monitor ────────────────────────────────────────────────────
+
+void MainWindow::scriptSeek(int frame)
+{
+    if (m_projectMonitor) {
+        m_projectMonitor->slotSeek(frame);
+    }
+}
+
+int MainWindow::scriptGetPosition()
+{
+    if (m_projectMonitor) {
+        return m_projectMonitor->position();
+    }
+    return -1;
+}
+
+void MainWindow::scriptPlay()
+{
+    if (pCore->monitorManager()) {
+        pCore->monitorManager()->slotPlay();
+    }
+}
+
+void MainWindow::scriptPause()
+{
+    if (pCore->monitorManager()) {
+        pCore->monitorManager()->slotPause();
+    }
+}
+
+// ── End Scripting API ──────────────────────────────────────────────────────
 
 #ifndef NODBUS
 void MainWindow::exitApp()

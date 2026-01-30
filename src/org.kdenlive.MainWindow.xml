@@ -20,5 +20,185 @@
     <method name="addTimelineClip">
       <arg name="url" type="s" direction="in"/>
     </method>
-    </interface>
+  </interface>
+
+  <interface name="org.kde.kdenlive.scripting">
+    <!-- Project Management -->
+    <method name="scriptNewProject">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="result" type="s" direction="out"/>
+    </method>
+    <method name="scriptOpenProject">
+      <arg name="filePath" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptSaveProject">
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptSaveProjectAs">
+      <arg name="filePath" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetProjectName">
+      <arg name="name" type="s" direction="out"/>
+    </method>
+    <method name="scriptGetProjectPath">
+      <arg name="path" type="s" direction="out"/>
+    </method>
+    <method name="scriptGetProjectFps">
+      <arg name="fps" type="d" direction="out"/>
+    </method>
+    <method name="scriptGetProjectResolution">
+      <arg name="width" type="i" direction="out"/>
+      <arg name="height" type="i" direction="out"/>
+    </method>
+    <method name="scriptGetProjectProperty">
+      <arg name="key" type="s" direction="in"/>
+      <arg name="value" type="s" direction="out"/>
+    </method>
+    <method name="scriptSetProjectProperty">
+      <arg name="key" type="s" direction="in"/>
+      <arg name="value" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Media Pool (Bin) -->
+    <method name="scriptImportMedia">
+      <arg name="filePaths" type="as" direction="in"/>
+      <arg name="folderId" type="s" direction="in"/>
+      <arg name="binIds" type="as" direction="out"/>
+    </method>
+    <method name="scriptCreateFolder">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="parentId" type="s" direction="in"/>
+      <arg name="folderId" type="s" direction="out"/>
+    </method>
+    <method name="scriptGetAllClipIds">
+      <arg name="clipIds" type="as" direction="out"/>
+    </method>
+    <method name="scriptGetFolderClipIds">
+      <arg name="folderId" type="s" direction="in"/>
+      <arg name="clipIds" type="as" direction="out"/>
+    </method>
+    <method name="scriptGetClipProperties">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="properties" type="a{sv}" direction="out"/>
+    </method>
+    <method name="scriptDeleteBinClip">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Timeline -->
+    <method name="scriptGetTrackCount">
+      <arg name="trackType" type="s" direction="in"/>
+      <arg name="count" type="i" direction="out"/>
+    </method>
+    <method name="scriptGetTrackInfo">
+      <arg name="trackIndex" type="i" direction="in"/>
+      <arg name="info" type="a{sv}" direction="out"/>
+    </method>
+    <method name="scriptGetAllTracksInfo">
+      <arg name="tracks" type="av" direction="out"/>
+    </method>
+    <method name="scriptAddTrack">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="audioTrack" type="b" direction="in"/>
+      <arg name="trackId" type="i" direction="out"/>
+    </method>
+    <method name="scriptInsertClip">
+      <arg name="binClipId" type="s" direction="in"/>
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="position" type="i" direction="in"/>
+      <arg name="clipId" type="i" direction="out"/>
+    </method>
+    <method name="scriptInsertClipsSequentially">
+      <arg name="binClipIds" type="as" direction="in"/>
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="startPosition" type="i" direction="in"/>
+      <arg name="clipIds" type="ai" direction="out"/>
+    </method>
+    <method name="scriptMoveClip">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="position" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptResizeClip">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="newDuration" type="i" direction="in"/>
+      <arg name="fromRight" type="b" direction="in"/>
+      <arg name="resultDuration" type="i" direction="out"/>
+    </method>
+    <method name="scriptDeleteTimelineClip">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetClipsOnTrack">
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="clips" type="av" direction="out"/>
+    </method>
+    <method name="scriptGetTimelineClipInfo">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="info" type="a{sv}" direction="out"/>
+    </method>
+    <method name="scriptCutClip">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="position" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Transitions -->
+    <method name="scriptAddMix">
+      <arg name="clipIdA" type="i" direction="in"/>
+      <arg name="clipIdB" type="i" direction="in"/>
+      <arg name="durationFrames" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptAddComposition">
+      <arg name="transitionId" type="s" direction="in"/>
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="position" type="i" direction="in"/>
+      <arg name="duration" type="i" direction="in"/>
+      <arg name="compositionId" type="i" direction="out"/>
+    </method>
+    <method name="scriptRemoveMix">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Markers/Guides -->
+    <method name="scriptAddGuide">
+      <arg name="frame" type="i" direction="in"/>
+      <arg name="comment" type="s" direction="in"/>
+      <arg name="category" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetGuides">
+      <arg name="guides" type="av" direction="out"/>
+    </method>
+    <method name="scriptDeleteGuide">
+      <arg name="frame" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptDeleteGuidesByCategory">
+      <arg name="category" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Playback -->
+    <method name="scriptSeek">
+      <arg name="frame" type="i" direction="in"/>
+    </method>
+    <method name="scriptGetPosition">
+      <arg name="frame" type="i" direction="out"/>
+    </method>
+    <method name="scriptPlay"/>
+    <method name="scriptPause"/>
+
+    <!-- Render -->
+    <method name="scriptRender">
+      <arg name="url" type="s" direction="in"/>
+    </method>
+  </interface>
 </node>
