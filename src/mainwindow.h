@@ -390,6 +390,8 @@ public Q_SLOTS:
     Q_SCRIPTABLE QStringList scriptGetFolderClipIds(const QString &folderId);
     Q_SCRIPTABLE QVariantMap scriptGetClipProperties(const QString &binId);
     Q_SCRIPTABLE bool scriptDeleteBinClip(const QString &binId);
+    Q_SCRIPTABLE QString scriptCreateTitleClip(const QString &titleXml, int durationFrames, const QString &clipName = QStringLiteral("Title clip"),
+                                               const QString &parentFolderId = QStringLiteral("-1"));
 
     // Timeline
     Q_SCRIPTABLE int scriptGetTrackCount(const QString &trackType);
@@ -410,6 +412,14 @@ public Q_SLOTS:
     Q_SCRIPTABLE int scriptAddComposition(const QString &transitionId, int trackId, int position, int duration);
     Q_SCRIPTABLE bool scriptRemoveMix(int clipId);
 
+    // Effects
+    Q_SCRIPTABLE bool scriptAddClipEffect(int clipId, const QString &effectId, const QStringList &paramKeys, const QStringList &paramValues);
+    Q_SCRIPTABLE bool scriptRemoveClipEffect(int clipId, const QString &effectId);
+    Q_SCRIPTABLE QString scriptGetClipEffects(int clipId);
+
+    // Speed
+    Q_SCRIPTABLE bool scriptSetClipSpeed(int clipId, double speed, bool pitchCompensate);
+
     // Markers & Guides
     Q_SCRIPTABLE bool scriptAddGuide(int frame, const QString &comment, int category);
     Q_SCRIPTABLE QVariantList scriptGetGuides();
@@ -421,6 +431,9 @@ public Q_SLOTS:
     Q_SCRIPTABLE int scriptGetPosition();
     Q_SCRIPTABLE void scriptPlay();
     Q_SCRIPTABLE void scriptPause();
+
+    // Additional
+    Q_SCRIPTABLE QVariantList scriptDetectScenes(const QString &binClipId, double threshold = 0.4, int minDuration = 0);
 
 public Q_SLOTS:
     void slotReloadEffects(const QStringList &paths);

@@ -153,6 +153,12 @@ public:
     void deregisterClipToBin(const QUuid &uuid);
 
     bool addEffect(const QString &effectId);
+    /** @brief Add an effect with parameters */
+    bool addEffect(const QString &effectId, const QMap<QString, QString> &params);
+    /** @brief Remove an effect by its asset ID */
+    bool removeEffect(const QString &effectId);
+    /** @brief Return comma-separated list of effect names on this clip's stack */
+    QString getEffectNames() const;
     /** @brief Request adding an effect. result is {task successful, error message displayed} */
     std::pair<bool, bool> addEffectWithUndo(const QString &effectId, Fun &undo, Fun &redo);
     bool copyEffect(const std::shared_ptr<EffectStackModel> &stackModel, int rowId);

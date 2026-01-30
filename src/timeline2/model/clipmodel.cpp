@@ -769,6 +769,38 @@ bool ClipModel::addEffect(const QString &effectId)
     return true;
 }
 
+bool ClipModel::addEffect(const QString &effectId, const QMap<QString, QString> &params)
+{
+    QWriteLocker locker(&m_lock);
+    if (EffectsRepository::get()->isAudioEffect(effectId)) {
+        if (m_currentState == PlaylistState::VideoOnly) {
+            return false;
+        }
+    } else if (m_currentState == PlaylistState::AudioOnly) {
+        return false;
+    }
+    if (EffectsRepository::get()->isTextEffect(effectId) && m_clipType != ClipType::Text) {
+        return false;
+    }
+    return m_effectStack->appendEffect(effectId, false, params);
+}
+
+bool ClipModel::removeEffect(const QString &effectId)
+{
+    QWriteLocker locker(&m_lock);
+    if (!m_effectStack->hasFilter(effectId)) return false;
+    Fun undo = []() { return true; };
+    Fun redo = []() { return true; };
+    QString effectName;
+    m_effectStack->removeEffectWithUndo(effectId, effectName, -1, undo, redo);
+    return !effectName.isEmpty();
+}
+
+QString ClipModel::getEffectNames() const
+{
+    return m_effectStack->effectNames();
+}
+
 std::pair<bool, bool> ClipModel::addEffectWithUndo(const QString &effectId, Fun &undo, Fun &redo)
 {
     QWriteLocker locker(&m_lock);

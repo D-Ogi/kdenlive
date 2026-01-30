@@ -44,6 +44,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include <QDBusInterface>
 #endif
 
+#include "bin/model/markerlistmodel.hpp"
 #include "dialogs/markerdialog.h"
 #include "dialogs/textbasededit.h"
 #include "dialogs/timeremap.h"
@@ -70,7 +71,6 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include "timeline2/view/timelinecontroller.h"
 #include "timeline2/view/timelinetabs.hpp"
 #include "timeline2/view/timelinewidget.h"
-#include "bin/model/markerlistmodel.hpp"
 #include "titler/titlewidget.h"
 #include "transitions/transitionlist/view/transitionlistwidget.hpp"
 #include "transitions/transitionsrepository.hpp"
@@ -190,10 +190,8 @@ void MainWindow::init()
 #ifndef NODBUS
     // Register MainWindow on D-Bus for scripting API access
     {
-        bool ok = QDBusConnection::sessionBus().registerObject(
-            QStringLiteral("/MainWindow"),
-            this,
-            QDBusConnection::ExportScriptableSlots | QDBusConnection::ExportScriptableSignals);
+        bool ok = QDBusConnection::sessionBus().registerObject(QStringLiteral("/MainWindow"), this,
+                                                               QDBusConnection::ExportScriptableSlots | QDBusConnection::ExportScriptableSignals);
         qDebug() << "D-Bus: registerObject /MainWindow on" << this << "->" << ok;
     }
 #endif
@@ -2825,6 +2823,19 @@ bool MainWindow::scriptDeleteBinClip(const QString &binId)
     return result;
 }
 
+QString MainWindow::scriptCreateTitleClip(const QString &titleXml, int durationFrames, const QString &clipName, const QString &parentFolderId)
+{
+    if (!pCore->currentDoc()) return QStringLiteral("-1");
+    auto model = pCore->projectItemModel();
+    QString folder = parentFolderId;
+    if (folder == QStringLiteral("-1")) folder = model->getRootFolder()->clipId();
+
+    std::unordered_map<QString, QString> properties;
+    properties[QStringLiteral("xmldata")] = titleXml;
+
+    return ClipCreator::createTitleClip(properties, durationFrames, clipName.isEmpty() ? i18n("Title clip") : clipName, folder, model);
+}
+
 // ── Timeline ───────────────────────────────────────────────────────────────
 
 int MainWindow::scriptGetTrackCount(const QString &trackType)
@@ -2908,17 +2919,15 @@ int MainWindow::scriptInsertClip(const QString &binClipId, int trackId, int posi
     if (!timeline || !timeline->model()) return -1;
 
     int newClipId = -1;
-    bool success = timeline->model()->requestClipInsertion(
-        binClipId, trackId, position, newClipId,
-        true,   // logUndo
-        true,   // refreshView
-        false   // useTargets
+    bool success = timeline->model()->requestClipInsertion(binClipId, trackId, position, newClipId,
+                                                           true, // logUndo
+                                                           true, // refreshView
+                                                           false // useTargets
     );
     return success ? newClipId : -1;
 }
 
-QVariantList MainWindow::scriptInsertClipsSequentially(const QStringList &binClipIds,
-                                                        int trackId, int startPosition)
+QVariantList MainWindow::scriptInsertClipsSequentially(const QStringList &binClipIds, int trackId, int startPosition)
 {
     QVariantList result;
     auto timeline = getCurrentTimeline();
@@ -2927,10 +2936,7 @@ QVariantList MainWindow::scriptInsertClipsSequentially(const QStringList &binCli
     int position = startPosition;
     for (const QString &binId : binClipIds) {
         int newClipId = -1;
-        bool success = timeline->model()->requestClipInsertion(
-            binId, trackId, position, newClipId,
-            true, true, false
-        );
+        bool success = timeline->model()->requestClipInsertion(binId, trackId, position, newClipId, true, true, false);
         if (success && newClipId >= 0) {
             result.append(newClipId);
             // Advance position by the clip's duration
@@ -2949,9 +2955,9 @@ bool MainWindow::scriptMoveClip(int clipId, int trackId, int position)
     if (!timeline || !timeline->model()) return false;
 
     return timeline->model()->requestClipMove(clipId, trackId, position,
-                                               true,   // moveMirrorTracks
-                                               true,   // updateView
-                                               true);  // logUndo
+                                              true,  // moveMirrorTracks
+                                              true,  // updateView
+                                              true); // logUndo
 }
 
 int MainWindow::scriptResizeClip(int clipId, int newDuration, bool fromRight)
@@ -3035,27 +3041,20 @@ bool MainWindow::scriptAddMix(int clipIdA, int clipIdB, int durationFrames)
 
     Fun undo = []() { return true; };
     Fun redo = []() { return true; };
-    bool success = timeline->model()->requestClipMix(
-        QStringLiteral("luma"), clipIds, mixDurations,
-        trackId, posB, true, true, true, undo, redo, false
-    );
+    bool success = timeline->model()->requestClipMix(QStringLiteral("luma"), clipIds, mixDurations, trackId, posB, true, true, true, undo, redo, false);
     if (success) {
         pCore->pushUndo(undo, redo, i18n("Add mix"));
     }
     return success;
 }
 
-int MainWindow::scriptAddComposition(const QString &transitionId, int trackId,
-                                      int position, int duration)
+int MainWindow::scriptAddComposition(const QString &transitionId, int trackId, int position, int duration)
 {
     auto timeline = getCurrentTimeline();
     if (!timeline || !timeline->model()) return -1;
 
     int newId = -1;
-    bool success = timeline->model()->requestCompositionInsertion(
-        transitionId, trackId, position, duration,
-        nullptr, newId, true
-    );
+    bool success = timeline->model()->requestCompositionInsertion(transitionId, trackId, position, duration, nullptr, newId, true);
     return success ? newId : -1;
 }
 
@@ -3065,6 +3064,58 @@ bool MainWindow::scriptRemoveMix(int clipId)
     if (!timeline || !timeline->model()) return false;
 
     return timeline->model()->requestItemDeletion(clipId, true);
+}
+
+// ── Effects ───────────────────────────────────────────────────────────────
+
+bool MainWindow::scriptAddClipEffect(int clipId, const QString &effectId, const QStringList &paramKeys, const QStringList &paramValues)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->isClip(clipId)) return false;
+
+    QMap<QString, QString> params;
+    int count = qMin(paramKeys.size(), paramValues.size());
+    for (int i = 0; i < count; ++i) {
+        params.insert(paramKeys.at(i), paramValues.at(i));
+    }
+
+    auto clip = timeline->model()->getClipPtr(clipId);
+    if (!clip) return false;
+    return clip->addEffect(effectId, params);
+}
+
+bool MainWindow::scriptRemoveClipEffect(int clipId, const QString &effectId)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->isClip(clipId)) return false;
+
+    auto clip = timeline->model()->getClipPtr(clipId);
+    if (!clip) return false;
+    return clip->removeEffect(effectId);
+}
+
+QString MainWindow::scriptGetClipEffects(int clipId)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return QString();
+    if (!timeline->model()->isClip(clipId)) return QString();
+
+    auto clip = timeline->model()->getClipPtr(clipId);
+    if (!clip) return QString();
+    return clip->getEffectNames();
+}
+
+// ── Speed ─────────────────────────────────────────────────────────────────
+
+bool MainWindow::scriptSetClipSpeed(int clipId, double speed, bool pitchCompensate)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->isClip(clipId)) return false;
+    // speed is percentage: 100=normal, 50=half, 200=double
+    return timeline->model()->requestClipTimeWarp(clipId, speed, pitchCompensate, true);
 }
 
 // ── Markers & Guides ──────────────────────────────────────────────────────
@@ -3167,6 +3218,75 @@ void MainWindow::scriptPause()
     if (pCore->monitorManager()) {
         pCore->monitorManager()->slotPause();
     }
+}
+
+QVariantList MainWindow::scriptDetectScenes(const QString &binClipId, double threshold, int minDuration)
+{
+    QVariantList result;
+
+    // 1. Get clip from bin by ID
+    auto clip = pCore->projectItemModel()->getClipByBinID(binClipId);
+    if (!clip) {
+        qWarning() << "scriptDetectScenes: clip not found:" << binClipId;
+        return result;
+    }
+
+    // 2. Get source file path
+    QString sourceUrl = clip->url();
+    if (sourceUrl.isEmpty()) {
+        qWarning() << "scriptDetectScenes: clip has no source URL";
+        return result;
+    }
+
+    // 3. Build FFmpeg command (from SceneSplitTask logic)
+    QString ffmpegPath = KdenliveSettings::ffmpegpath();
+    QStringList args;
+    args << QStringLiteral("-y") << QStringLiteral("-loglevel") << QStringLiteral("info") << QStringLiteral("-i") << sourceUrl << QStringLiteral("-filter:v")
+         << QStringLiteral("select='gt(scene,%1)',showinfo").arg(threshold) << QStringLiteral("-vsync") << QStringLiteral("vfr") << QStringLiteral("-f")
+         << QStringLiteral("null") << QStringLiteral("-");
+
+    // 4. Run FFmpeg synchronously
+    QProcess process;
+    process.start(ffmpegPath, args);
+    process.waitForFinished(-1);
+
+    // 5. Parse output for scene-change timestamps
+    QString output = process.readAllStandardError();
+    QStringList lines = output.split(QLatin1Char('\n'));
+
+    double fps = pCore->getCurrentFps();
+    QList<double> timestamps;
+
+    for (const QString &line : lines) {
+        if (line.contains(QStringLiteral("[Parsed_showinfo"))) {
+            int pos = line.indexOf(QStringLiteral("pts_time:"));
+            if (pos > -1) {
+                QString timeStr = line.mid(pos + 9);
+                int endPos = timeStr.indexOf(QLatin1Char(' '));
+                if (endPos > -1) {
+                    timeStr = timeStr.left(endPos);
+                }
+                bool ok;
+                double time = timeStr.toDouble(&ok);
+                if (ok) {
+                    if (minDuration > 0 && !timestamps.isEmpty()) {
+                        double minSecs = minDuration / fps;
+                        if (time - timestamps.last() < minSecs) {
+                            continue;
+                        }
+                    }
+                    timestamps.append(time);
+                }
+            }
+        }
+    }
+
+    // 6. Convert to QVariantList for D-Bus serialization
+    for (double t : timestamps) {
+        result.append(t);
+    }
+
+    return result;
 }
 
 // ── End Scripting API ──────────────────────────────────────────────────────
