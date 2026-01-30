@@ -91,6 +91,13 @@
       <arg name="binId" type="s" direction="in"/>
       <arg name="success" type="b" direction="out"/>
     </method>
+    <method name="scriptCreateTitleClip">
+      <arg name="titleXml" type="s" direction="in"/>
+      <arg name="durationFrames" type="i" direction="in"/>
+      <arg name="clipName" type="s" direction="in"/>
+      <arg name="parentFolderId" type="s" direction="in"/>
+      <arg name="binId" type="s" direction="out"/>
+    </method>
 
     <!-- Timeline -->
     <method name="scriptGetTrackCount">
@@ -175,6 +182,32 @@
       <arg name="success" type="b" direction="out"/>
     </method>
 
+    <!-- Effects -->
+    <method name="scriptAddClipEffect">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="effectId" type="s" direction="in"/>
+      <arg name="paramKeys" type="as" direction="in"/>
+      <arg name="paramValues" type="as" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptRemoveClipEffect">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="effectId" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetClipEffects">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="effects" type="s" direction="out"/>
+    </method>
+
+    <!-- Speed -->
+    <method name="scriptSetClipSpeed">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="speed" type="d" direction="in"/>
+      <arg name="pitchCompensate" type="b" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
     <!-- Markers/Guides -->
     <method name="scriptAddGuide">
       <arg name="frame" type="i" direction="in"/>
@@ -208,6 +241,15 @@
     <!-- Render -->
     <method name="scriptRender">
       <arg name="url" type="s" direction="in"/>
+    </method>
+
+    <!-- Additional -->
+    <method name="scriptDetectScenes">
+      <arg name="binClipId" type="s" direction="in"/>
+      <arg name="threshold" type="d" direction="in"/>
+      <arg name="minDuration" type="i" direction="in"/>
+      <arg name="timestamps" type="ad" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
     </method>
   </interface>
 </node>
