@@ -186,6 +186,17 @@ void MainWindow::init()
 
     // Handle communication with the renderer app
     new RenderServer(this);
+
+#ifndef NODBUS
+    // Register MainWindow on D-Bus for scripting API access
+    {
+        bool ok = QDBusConnection::sessionBus().registerObject(
+            QStringLiteral("/MainWindow"),
+            this,
+            QDBusConnection::ExportScriptableSlots | QDBusConnection::ExportScriptableSignals);
+        qDebug() << "D-Bus: registerObject /MainWindow on" << this << "->" << ok;
+    }
+#endif
     QString defaultProfile = KdenliveSettings::default_profile();
 
     pCore->setCurrentProfile(defaultProfile.isEmpty() ? ProjectManager::getDefaultProjectFormat() : defaultProfile);
