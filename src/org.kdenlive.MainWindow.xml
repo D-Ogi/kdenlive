@@ -48,8 +48,10 @@
     <method name="scriptGetProjectFps">
       <arg name="fps" type="d" direction="out"/>
     </method>
-    <method name="scriptGetProjectResolution">
+    <method name="scriptGetProjectResolutionWidth">
       <arg name="width" type="i" direction="out"/>
+    </method>
+    <method name="scriptGetProjectResolutionHeight">
       <arg name="height" type="i" direction="out"/>
     </method>
     <method name="scriptGetProjectProperty">
@@ -83,6 +85,7 @@
     <method name="scriptGetClipProperties">
       <arg name="binId" type="s" direction="in"/>
       <arg name="properties" type="a{sv}" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantMap"/>
     </method>
     <method name="scriptDeleteBinClip">
       <arg name="binId" type="s" direction="in"/>
@@ -97,9 +100,11 @@
     <method name="scriptGetTrackInfo">
       <arg name="trackIndex" type="i" direction="in"/>
       <arg name="info" type="a{sv}" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantMap"/>
     </method>
     <method name="scriptGetAllTracksInfo">
       <arg name="tracks" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
     </method>
     <method name="scriptAddTrack">
       <arg name="name" type="s" direction="in"/>
@@ -116,7 +121,8 @@
       <arg name="binClipIds" type="as" direction="in"/>
       <arg name="trackId" type="i" direction="in"/>
       <arg name="startPosition" type="i" direction="in"/>
-      <arg name="clipIds" type="ai" direction="out"/>
+      <arg name="clipIds" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
     </method>
     <method name="scriptMoveClip">
       <arg name="clipId" type="i" direction="in"/>
@@ -137,10 +143,12 @@
     <method name="scriptGetClipsOnTrack">
       <arg name="trackId" type="i" direction="in"/>
       <arg name="clips" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
     </method>
     <method name="scriptGetTimelineClipInfo">
       <arg name="clipId" type="i" direction="in"/>
       <arg name="info" type="a{sv}" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantMap"/>
     </method>
     <method name="scriptCutClip">
       <arg name="clipId" type="i" direction="in"/>
@@ -176,6 +184,7 @@
     </method>
     <method name="scriptGetGuides">
       <arg name="guides" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
     </method>
     <method name="scriptDeleteGuide">
       <arg name="frame" type="i" direction="in"/>
