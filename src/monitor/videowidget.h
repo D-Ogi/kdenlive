@@ -122,6 +122,10 @@ public:
     virtual const QStringList getGPUInfo();
     /** @brief Returns the current frame as image */
     QImage image() const;
+    /** @brief Enforce fixed image size */
+    void setFixedImageSize(const QSize fixedSize);
+    /** @brief Ensure image position on fixed size */
+    void updateImagePosition();
 
 protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
@@ -198,6 +202,8 @@ protected:
     bool m_sendFrame;
     QSemaphore m_analyseSem;
     float m_zoom;
+    QRectF m_rect;
+    QPointF m_monitorOffset;
     QSize m_profileSize;
     QMutex m_mutex;
     bool m_isInitialized{false};
@@ -208,7 +214,6 @@ protected:
     virtual void updateRulerHeight(int addedHeight);
 
 private:
-    QRectF m_rect;
     QRect m_effectRect;
     QPoint m_panStart;
     QPoint m_dragStart;
@@ -216,6 +221,7 @@ private:
     bool m_qmlEvent;
     bool m_swallowDrop{false};
     int m_bckpMax;
+    QSize m_fixedSize;
     std::unique_ptr<Mlt::Filter> m_glslManager;
     std::unique_ptr<Mlt::Event> m_threadStartEvent;
     std::unique_ptr<Mlt::Event> m_threadStopEvent;

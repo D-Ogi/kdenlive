@@ -197,6 +197,11 @@ const QStringList VideoWidget::getGPUInfo()
     return {};
 }
 
+void VideoWidget::setFixedImageSize(const QSize fixedSize)
+{
+    m_fixedSize = fixedSize;
+}
+
 void VideoWidget::resizeVideo(int width, int height)
 {
     double x, y, w, h;
@@ -205,21 +210,28 @@ void VideoWidget::resizeVideo(int width, int height)
 
     // Special case optimization to negate odd effect of sample aspect ratio
     // not corresponding exactly with image resolution.
-    if (int(this_aspect * 1000) == int(m_dar * 1000)) {
-        w = width;
-        h = height;
-    }
-    // Use OpenGL to normalise sample aspect ratio
-    else if (height * m_dar > width) {
-        w = width;
-        h = width / m_dar;
+    if (m_fixedSize.isValid()) {
+        w = m_fixedSize.width();
+        h = m_fixedSize.height();
     } else {
-        w = height * m_dar;
-        h = height;
+        if (int(this_aspect * 1000) == int(m_dar * 1000)) {
+            w = width;
+            h = height;
+        }
+        // Use OpenGL to normalise sample aspect ratio
+        else if (height * m_dar > width) {
+            w = width;
+            h = width / m_dar;
+        } else {
+            w = height * m_dar;
+            h = height;
+        }
     }
     x = (width - w) / 2.0;
     y = (height - h) / 2.0;
     m_rect = QRectF(x, y, w, h);
+    const QSize parentSize = parentWidget()->size();
+    m_monitorOffset = QPointF((parentSize.width() - width) / 2., (parentSize.height() - m_displayRulerHeight - height) / 2.);
 
     QQuickItem *rootQml = rootObject();
     if (rootQml) {
@@ -244,6 +256,13 @@ void VideoWidget::resizeEvent(QResizeEvent *event)
         refreshZoom = false;
     }
     resizeVideo(event->size().width(), event->size().height());
+}
+
+void VideoWidget::updateImagePosition()
+{
+    if (m_fixedSize.isValid()) {
+        resizeVideo(width(), height());
+    }
 }
 
 void VideoWidget::forceRefreshZoom()

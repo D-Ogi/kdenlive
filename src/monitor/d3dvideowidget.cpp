@@ -175,6 +175,10 @@ void D3DVideoWidget::renderVideo()
     D3D11_VIEWPORT v;
     v.TopLeftX = 0.f;
     v.TopLeftY = -qRound(m_displayRulerHeight * devicePixelRatioF() * 0.5);
+    if (!m_monitorOffset.isNull()) {
+        v.TopLeftX += m_monitorOffset.x() * devicePixelRatioF();
+        v.TopLeftY -= m_monitorOffset.y() * devicePixelRatioF());
+    }
     v.Width = this->width() * devicePixelRatioF();
     v.Height = this->height() * devicePixelRatioF();
     v.MinDepth = 0.f;
