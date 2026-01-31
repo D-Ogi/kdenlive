@@ -3080,9 +3080,9 @@ bool MainWindow::scriptAddClipEffect(int clipId, const QString &effectId, const 
         params.insert(paramKeys.at(i), paramValues.at(i));
     }
 
-    auto clip = timeline->model()->getClipPtr(clipId);
-    if (!clip) return false;
-    return clip->addEffect(effectId, params);
+    auto stack = timeline->model()->getClipEffectStackModel(clipId);
+    if (!stack) return false;
+    return stack->appendEffect(effectId, false, params);
 }
 
 bool MainWindow::scriptRemoveClipEffect(int clipId, const QString &effectId)
@@ -3091,9 +3091,13 @@ bool MainWindow::scriptRemoveClipEffect(int clipId, const QString &effectId)
     if (!timeline || !timeline->model()) return false;
     if (!timeline->model()->isClip(clipId)) return false;
 
-    auto clip = timeline->model()->getClipPtr(clipId);
-    if (!clip) return false;
-    return clip->removeEffect(effectId);
+    auto stack = timeline->model()->getClipEffectStackModel(clipId);
+    if (!stack || !stack->hasFilter(effectId)) return false;
+    Fun undo = []() { return true; };
+    Fun redo = []() { return true; };
+    QString effectName;
+    stack->removeEffectWithUndo(effectId, effectName, -1, undo, redo);
+    return !effectName.isEmpty();
 }
 
 QString MainWindow::scriptGetClipEffects(int clipId)
@@ -3102,9 +3106,9 @@ QString MainWindow::scriptGetClipEffects(int clipId)
     if (!timeline || !timeline->model()) return QString();
     if (!timeline->model()->isClip(clipId)) return QString();
 
-    auto clip = timeline->model()->getClipPtr(clipId);
-    if (!clip) return QString();
-    return clip->getEffectNames();
+    auto stack = timeline->model()->getClipEffectStackModel(clipId);
+    if (!stack) return QString();
+    return stack->effectNames();
 }
 
 // ── Speed ─────────────────────────────────────────────────────────────────
