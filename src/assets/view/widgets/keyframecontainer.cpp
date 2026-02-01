@@ -17,6 +17,7 @@
 #include "assets/view/widgets/pointparamwidget.hpp"
 #include "core.h"
 #include "effects/effectsrepository.hpp"
+#include "expressionwidget.h"
 #include "kdenlivesettings.h"
 #include "lumaliftgainparam.hpp"
 #include "monitor/monitor.h"
@@ -46,6 +47,7 @@
 #include <QPointer>
 #include <QStackedWidget>
 #include <QStyle>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -130,21 +132,38 @@ KeyframeContainer::KeyframeContainer(std::shared_ptr<AssetParameterModel> model,
     m_model->prepareKeyframes();
     m_keyframes = m_model->getKeyframeModel();
     m_keyframeview = new KeyframeView(m_keyframes, duration, m_isRelative, parent);
-    m_toggleViewAction = new KDualAction(parent);
-    m_toggleViewAction->setActiveIcon(QIcon::fromTheme(QStringLiteral("measure")));
-    m_toggleViewAction->setActiveText(i18n("Switch to timeline view"));
-    m_toggleViewAction->setInactiveIcon(QIcon::fromTheme(QStringLiteral("tool_curve")));
-    m_toggleViewAction->setInactiveText(i18n("Switch to curve editor view"));
-    m_toggleViewAction->setEnabled(false);
-    // use these two icons for now
 
-    connect(m_toggleViewAction, &KDualAction::triggered, this, &KeyframeContainer::slotToggleView);
+    // Three-way view selector: Timeline | Curve Editor | Expression
+    int size = QApplication::style()->pixelMetric(QStyle::PM_SmallIconSize);
+    m_viewSelector = new KSelectAction(QIcon::fromTheme(QStringLiteral("measure")), i18n("View mode"), parent);
+    m_timelineViewAction = new QAction(QIcon::fromTheme(QStringLiteral("measure")), i18n("Timeline View"), parent);
+    m_timelineViewAction->setCheckable(true);
+    m_timelineViewAction->setChecked(true);
+    m_curveViewAction = new QAction(QIcon::fromTheme(QStringLiteral("tool_curve")), i18n("Curve Editor"), parent);
+    m_curveViewAction->setCheckable(true);
+    m_curveViewAction->setEnabled(false); // enabled when first curve editor is added
+    m_expressionViewAction = new QAction(QIcon::fromTheme(QStringLiteral("code-context")), i18n("Expression Editor"), parent);
+    m_expressionViewAction->setCheckable(true);
+    m_viewSelector->addAction(m_timelineViewAction);
+    m_viewSelector->addAction(m_curveViewAction);
+    m_viewSelector->addAction(m_expressionViewAction);
+    m_viewSelector->setCurrentAction(m_timelineViewAction);
+    m_viewSelector->setToolBarMode(KSelectAction::MenuMode);
+    m_viewSelector->setToolTip(i18n("Switch between timeline, curve editor, and expression views"));
+    connect(m_viewSelector, &KSelectAction::actionTriggered, this, [this](QAction *action) {
+        if (action == m_timelineViewAction) {
+            setViewMode(TimelineView);
+        } else if (action == m_curveViewAction) {
+            setViewMode(CurveEditorView);
+        } else if (action == m_expressionViewAction) {
+            setViewMode(ExpressionView);
+        }
+    });
 
     m_viewswitch = new QToolButton(parent);
     m_viewswitch->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    int size = QApplication::style()->pixelMetric(QStyle::PM_SmallIconSize);
     m_viewswitch->setIconSize(QSize(size, size));
-    m_viewswitch->setDefaultAction(m_toggleViewAction);
+    m_viewswitch->setDefaultAction(m_viewSelector);
 
     m_addDeleteAction = new KDualAction(parent);
     m_addDeleteAction->setActiveIcon(QIcon::fromTheme(QStringLiteral("keyframe-add")));
@@ -215,6 +234,9 @@ KeyframeContainer::KeyframeContainer(std::shared_ptr<AssetParameterModel> model,
     m_toolbar->addAction(m_copyAction);
     m_toolbar->addAction(m_pasteAction);
     m_toolbar->addAction(m_selectType);
+
+    // Initial view mode check is deferred to checkInitialExpressionMode(),
+    // called from AssetParameterView after all addParameter() calls.
 
     QAction *seekKeyframe = new QAction(i18n("Seek to Keyframe on Select"), parent);
     seekKeyframe->setCheckable(true);
@@ -579,7 +601,7 @@ int KeyframeContainer::getPosition() const
 void KeyframeContainer::slotAtKeyframe(bool atKeyframe, bool singleKeyframe)
 {
     m_addDeleteAction->setActive(!atKeyframe);
-    m_centerAction->setEnabled(!atKeyframe && getCurrentView() == 0);
+    m_centerAction->setEnabled(!atKeyframe && m_viewMode == TimelineView);
 
     int pos = pCore->getMonitorPosition(m_model->monitorId);
     bool outside = !pCore->itemContainsPos(m_keyframes->getOwnerId(), pos);
@@ -699,6 +721,9 @@ void KeyframeContainer::initNeededSceneAndHelper()
 
 void KeyframeContainer::addParameter(const QPersistentModelIndex &index)
 {
+    // Track all animated parameter indices for expression tabs
+    m_animatedIndices.append(QPersistentModelIndex(index));
+
     // Retrieve parameters from the model
     QString name = m_model->data(index, Qt::DisplayRole).toString();
     QString comment = m_model->data(index, AssetParameterModel::CommentRole).toString();
@@ -1001,7 +1026,7 @@ MonitorSceneType KeyframeContainer::requiredScene() const
 
 bool KeyframeContainer::keyframesVisible() const
 {
-    return m_editorviewcontainer->isVisible();
+    return m_editorviewcontainer->isVisible() || (m_expressionContainer && m_expressionContainer->isVisible());
 }
 
 void KeyframeContainer::showKeyframes(bool enable)
@@ -1010,7 +1035,18 @@ void KeyframeContainer::showKeyframes(bool enable)
         return;
     }
     m_toolbar->setVisible(enable);
-    m_editorviewcontainer->setVisible(enable);
+    if (enable) {
+        // Restore correct view visibility based on current mode
+        m_editorviewcontainer->setVisible(m_viewMode != ExpressionView);
+        if (m_expressionContainer) {
+            m_expressionContainer->setVisible(m_viewMode == ExpressionView);
+        }
+    } else {
+        m_editorviewcontainer->setVisible(false);
+        if (m_expressionContainer) {
+            m_expressionContainer->setVisible(false);
+        }
+    }
     m_time->setVisible(enable);
     m_viewswitch->setVisible(enable);
     m_fixedHeight = m_addedHeight + (enable ? m_baseHeight : 0);
@@ -1341,45 +1377,88 @@ void KeyframeContainer::slotSeekToPos(int pos)
     Q_EMIT seekToPos(pos + (canHaveZone ? in : 0));
 }
 
-int KeyframeContainer::getCurrentView()
+KeyframeContainer::ViewMode KeyframeContainer::currentViewMode() const
 {
-    // 0 for KeyframeView, 1 for KeyframeCurveEditor
-    return m_editorviewcontainer->currentIndex();
+    return m_viewMode;
 }
 
-void KeyframeContainer::slotToggleView()
+void KeyframeContainer::setViewMode(ViewMode mode)
 {
-    int cur = m_editorviewcontainer->currentIndex();
+    if (mode == m_viewMode) {
+        return;
+    }
+    m_viewMode = mode;
     int height = m_editorviewcontainer->height();
-    switch (cur) {
-    case 0:
+
+    switch (mode) {
+    case TimelineView:
+        m_editorviewcontainer->setCurrentIndex(0);
+        m_editorviewcontainer->setVisible(true);
+        m_keyframeview->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+        m_curveeditorcontainer->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+        height = m_keyframeview->height();
+        m_centerAction->setEnabled(!m_keyframes->hasKeyframe(getPosition()));
+        if (m_expressionContainer) {
+            m_expressionContainer->setVisible(false);
+        }
+        m_viewSelector->setCurrentAction(m_timelineViewAction);
+        Q_EMIT onKeyframeView();
+        break;
+    case CurveEditorView:
         m_editorviewcontainer->setCurrentIndex(1);
+        m_editorviewcontainer->setVisible(true);
         m_curveeditorcontainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-        // m_keyframeview->setSint offset = pCore->getItemIn(m_keyframes->getOwnerId());lotaddizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-        if (m_curveContainerHeight <= 0) { // initialize curve editor widget base height
+        if (m_curveContainerHeight <= 0 && !m_curveeditorview.isEmpty()) {
             m_curveContainerHeight = m_curveeditorview.last()->height() + m_curveeditorcontainer->height();
         }
         height = m_curveContainerHeight;
         m_curveeditorcontainer->setFixedHeight(height);
         m_centerAction->setEnabled(false);
+        if (m_expressionContainer) {
+            m_expressionContainer->setVisible(false);
+        }
+        m_viewSelector->setCurrentAction(m_curveViewAction);
         Q_EMIT onCurveEditorView();
         break;
-    case 1:
-        m_editorviewcontainer->setCurrentIndex(0);
-        m_keyframeview->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
-        m_curveeditorcontainer->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-        height = m_keyframeview->height();
-        m_centerAction->setEnabled(!m_keyframes->hasKeyframe(getPosition()));
-        Q_EMIT onKeyframeView();
-        break;
-    case -1:
-    default:
-        qDebug() << ":::: VIEW WIDGET NOT INITIALIZED CORRECTLY";
+    case ExpressionView:
+        m_editorviewcontainer->setVisible(false);
+        if (!m_expressionContainer) {
+            m_expressionContainer = new QTabWidget(m_parent);
+            for (const auto &idx : m_animatedIndices) {
+                QString paramName = m_model->data(idx, AssetParameterModel::NameRole).toString();
+                QString displayName = m_model->data(idx, Qt::DisplayRole).toString();
+                auto type = m_model->data(idx, AssetParameterModel::TypeRole).value<ParamType>();
+                if (type == ParamType::AnimatedRect || type == ParamType::AnimatedFakeRect) {
+                    // Per-component tabs for rect parameters
+                    QStringList compNames = {i18n("X"), i18n("Y"), i18n("Width"), i18n("Height")};
+                    if (m_model->data(idx, AssetParameterModel::OpacityRole).toBool()) {
+                        compNames << i18n("Opacity");
+                    }
+                    for (int c = 0; c < compNames.size(); c++) {
+                        auto *ew = new ExpressionWidget(m_model, paramName, m_expressionContainer, c);
+                        m_expressionWidgets.append(ew);
+                        m_expressionContainer->addTab(ew, compNames[c]);
+                    }
+                } else {
+                    // Scalar parameter — single tab
+                    auto *ew = new ExpressionWidget(m_model, paramName, m_expressionContainer);
+                    m_expressionWidgets.append(ew);
+                    m_expressionContainer->addTab(ew, displayName);
+                }
+            }
+            m_expressionContainer->tabBar()->setVisible(m_expressionContainer->count() > 1);
+            m_layout->addRow(m_expressionContainer);
+        }
+        m_expressionContainer->setVisible(true);
+        m_viewSelector->setCurrentAction(m_expressionViewAction);
         break;
     }
-    m_editorviewcontainer->setFixedHeight(height);
-    m_baseHeight = height + m_toolbar->sizeHint().height();
-    m_fixedHeight = m_addedHeight + m_baseHeight;
+
+    if (mode != ExpressionView) {
+        m_editorviewcontainer->setFixedHeight(height);
+        m_baseHeight = height + m_toolbar->sizeHint().height();
+        m_fixedHeight = m_addedHeight + m_baseHeight;
+    }
     Q_EMIT updateHeight();
 }
 void KeyframeContainer::sendStandardCommand(int command)
@@ -1399,8 +1478,8 @@ void KeyframeContainer::sendStandardCommand(int command)
 
 void KeyframeContainer::addCurveEditor(const QPersistentModelIndex &index, QString name, int rectindex)
 {
-    if (!m_toggleViewAction->isEnabled()) {
-        m_toggleViewAction->setEnabled(true);
+    if (!m_curveViewAction->isEnabled()) {
+        m_curveViewAction->setEnabled(true);
     }
     if (name.isEmpty()) {
         name = m_model->data(index, Qt::DisplayRole).toString();
@@ -1428,4 +1507,15 @@ void KeyframeContainer::addCurveEditor(const QPersistentModelIndex &index, QStri
     connect(m_curveeditorview.last(), &KeyframeCurveEditor::seekToPos, this, &KeyframeContainer::slotSeekToPos);
     // NO slotCenterKeyframe
     m_curveeditorcontainer->addTab(m_curveeditorview.last(), name);
+}
+
+void KeyframeContainer::checkInitialExpressionMode()
+{
+    for (const auto &idx : m_animatedIndices) {
+        QString pn = m_model->data(idx, AssetParameterModel::NameRole).toString();
+        if (m_model->hasExpression(pn) || m_model->hasRectComponentExpression(pn)) {
+            setViewMode(ExpressionView);
+            return;
+        }
+    }
 }

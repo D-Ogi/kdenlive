@@ -5688,6 +5688,42 @@ int TimelineModel::getCompositionPlaytime(int compoId) const
     return playtime;
 }
 
+QList<int> TimelineModel::getCompositionIds() const
+{
+    READ_LOCK();
+    QList<int> ids;
+    ids.reserve(int(m_allCompositions.size()));
+    for (const auto &[id, _] : m_allCompositions) {
+        ids.append(id);
+    }
+    return ids;
+}
+
+int TimelineModel::getGroupRootId(int itemId) const
+{
+    READ_LOCK();
+    return m_groups->getRootId(itemId);
+}
+
+GroupType TimelineModel::getGroupType(int itemId) const
+{
+    READ_LOCK();
+    return m_groups->getType(itemId);
+}
+
+bool TimelineModel::requestRemoveFromGroup(int itemId, bool logUndo)
+{
+    QWriteLocker locker(&m_lock);
+    if (!m_groups->isInGroup(itemId)) return false;
+    Fun undo = []() { return true; };
+    Fun redo = []() { return true; };
+    bool result = requestRemoveFromGroup(itemId, undo, redo);
+    if (result && logUndo) {
+        PUSH_UNDO(undo, redo, i18n("Remove from group"));
+    }
+    return result;
+}
+
 int TimelineModel::getItemPosition(int itemId) const
 {
     if (isClip(itemId)) {

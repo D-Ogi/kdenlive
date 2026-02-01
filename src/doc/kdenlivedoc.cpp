@@ -21,6 +21,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include "documentvalidator.h"
 #include "docundostack.hpp"
 #include "effects/effectsrepository.hpp"
+#include "expressions/expressiontemplaterepository.h"
 #include "kdenlivesettings.h"
 #include "mainwindow.h"
 #include "mltcontroller/clipcontroller.h"
@@ -148,11 +149,11 @@ KdenliveDoc::KdenliveDoc(std::shared_ptr<DocUndoStack> undoStack, std::pair<int,
     m_document = createEmptyDocument(tracks.second, tracks.first);
     initializeProperties(true, tracks, 2);
     loadDocumentProperties();
+    ExpressionTemplateRepository::instance().loadProjectTemplates(this);
     pCore->taskManager.unBlock();
 }
 
-DocOpenResult KdenliveDoc::Open(const QUrl &url, const QString &projectFolder, QUndoGroup *undoGroup,
-    bool recoverCorruption, MainWindow *parent)
+DocOpenResult KdenliveDoc::Open(const QUrl &url, const QString &projectFolder, QUndoGroup *undoGroup, bool recoverCorruption, MainWindow *parent)
 {
 
     DocOpenResult result = DocOpenResult{};
@@ -218,7 +219,6 @@ DocOpenResult KdenliveDoc::Open(const QUrl &url, const QString &projectFolder, Q
     }
     file.close();
 
-
     qCDebug(KDENLIVE_LOG) << "// validating project file";
     DocumentValidator validator(domDoc, url);
     bool success = validator.isProject();
@@ -274,9 +274,10 @@ DocOpenResult KdenliveDoc::Open(const QUrl &url, const QString &projectFolder, Q
     auto doc = std::unique_ptr<KdenliveDoc>(new KdenliveDoc(url, domDoc, projectFolder, undoGroup, parent));
     if (!validationResult.second.isEmpty()) {
         doc->m_modifiedDecimalPoint = validationResult.second;
-        //doc->setModifiedDecimalPoint(validationResult.second);
+        // doc->setModifiedDecimalPoint(validationResult.second);
     }
     doc->loadDocumentProperties();
+    ExpressionTemplateRepository::instance().loadProjectTemplates(doc.get());
     if (!doc->m_projectFolder.isEmpty()) {
         // Ask to create the project directory if it does not exist
         QDir folder(doc->m_projectFolder);
@@ -341,6 +342,7 @@ KdenliveDoc::~KdenliveDoc()
     if (pCore->window()) {
         disconnect(this, &KdenliveDoc::docModified, pCore->window(), &MainWindow::slotUpdateDocumentState);
     }
+    ExpressionTemplateRepository::instance().clearProjectTemplates();
     m_commandStack->clear();
     m_timelines.clear();
     if (m_autosave) {
@@ -1769,6 +1771,8 @@ double KdenliveDoc::getDocumentVersion() const
 
 QMap<QString, QString> KdenliveDoc::documentProperties(bool saveHash)
 {
+    // Save expression templates to document properties before returning
+    ExpressionTemplateRepository::instance().saveProjectTemplates(this);
     m_documentProperties.insert(QStringLiteral("version"), QString::number(DOCUMENTVERSION));
     m_documentProperties.insert(QStringLiteral("kdenliveversion"), QStringLiteral(KDENLIVE_VERSION));
     m_documentProperties.insert(QStringLiteral("sessionid"), pCore->sessionId);

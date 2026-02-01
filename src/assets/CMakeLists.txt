@@ -45,6 +45,9 @@ set(kdenlive_SRCS
   assets/view/widgets/clickablelabelwidget.cpp
   assets/view/widgets/fontparamwidget.cpp
   assets/view/widgets/keywordparamwidget.cpp
+  assets/view/widgets/expressionwidget.cpp
+  assets/view/widgets/expressioneditordialog.cpp
+  assets/view/widgets/jssyntaxhighlighter.cpp
   # curves widget
   assets/view/widgets/curves/abstractcurvewidget.h
   assets/view/widgets/curves/bezier/beziersplineeditor.cpp

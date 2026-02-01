@@ -287,6 +287,14 @@ public:
     virtual int getStartTimecode();
     /** @brief Return maximum audio level for a stream. */
     int16_t getAudioMax(int streamIdx) const;
+    /** @brief Return normalized audio levels (0.0-1.0) resampled to one value per video frame.
+     *  @param streamIdx Audio stream index
+     *  @param totalVideoFrames Number of video frames to produce
+     *  @param fps Project FPS
+     *  @param rmsMode If true, compute RMS instead of peak per frame
+     *  @return Vector of floats, one per video frame
+     */
+    QVector<float> getAudioLevelsPerFrame(int streamIdx, int totalVideoFrames, double fps, bool rmsMode = false) const;
     /** @brief A timeline clip was modified, reload its other timeline instances. */
     void reloadTimeline(std::shared_ptr<EffectStackModel> stack = nullptr);
     /** @brief Copy sequence clip timewarp producers to a new location (when saving / rendering). */

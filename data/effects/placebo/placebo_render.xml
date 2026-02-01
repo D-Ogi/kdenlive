@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<!DOCTYPE kpartgui>
+<effect xmlns="https://www.kdenlive.org" tag="placebo.render" id="placebo.render">
+    <name>GPU Render (libplacebo)</name>
+    <description>GPU-accelerated scaling, debanding, dithering and tonemapping</description>
+    <author>D-Ogi</author>
+    <parameter type="list" name="preset" default="default"
+               paramlist="fast;default;high_quality">
+        <name>Quality Preset</name>
+        <paramlistdisplay>Fast,Default,High Quality</paramlistdisplay>
+    </parameter>
+    <parameter type="list" name="upscaler" default="ewa_lanczos"
+               paramlist="bilinear;catmull_rom;mitchell;lanczos;ewa_lanczos;spline36">
+        <name>Upscaler</name>
+        <paramlistdisplay>Bilinear,Catmull-Rom,Mitchell,Lanczos,EWA Lanczos,Spline36</paramlistdisplay>
+    </parameter>
+    <parameter type="list" name="downscaler" default="mitchell"
+               paramlist="bilinear;catmull_rom;mitchell;lanczos;ewa_lanczos;spline36">
+        <name>Downscaler</name>
+        <paramlistdisplay>Bilinear,Catmull-Rom,Mitchell,Lanczos,EWA Lanczos,Spline36</paramlistdisplay>
+    </parameter>
+    <parameter type="bool" name="deband" default="0">
+        <name>Debanding</name>
+    </parameter>
+    <parameter type="constant" name="deband_iterations" default="1" min="1" max="4">
+        <name>Deband Iterations</name>
+    </parameter>
+    <parameter type="list" name="dithering" default="blue"
+               paramlist="blue;ordered_lut;white;none">
+        <name>Dithering</name>
+        <paramlistdisplay>Blue Noise,Ordered LUT,White Noise,None</paramlistdisplay>
+    </parameter>
+    <parameter type="list" name="tonemapping" default="auto"
+               paramlist="auto;clip;mobius;reinhard;hable;bt2390;spline">
+        <name>Tone Mapping</name>
+        <paramlistdisplay>Auto,Clip,Mobius,Reinhard,Hable,BT.2390,Spline</paramlistdisplay>
+    </parameter>
+</effect>

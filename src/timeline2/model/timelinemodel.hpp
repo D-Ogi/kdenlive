@@ -1027,6 +1027,16 @@ protected:
     std::unordered_set<int> getAllSubIds();
 
 public:
+    /** @brief Return all composition IDs currently on the timeline */
+    QList<int> getCompositionIds() const;
+
+    /** @brief Return the root group ID for a given item, or the item itself if not grouped */
+    int getGroupRootId(int itemId) const;
+    /** @brief Return the group type for a given group/item ID */
+    GroupType getGroupType(int itemId) const;
+    /** @brief Remove a single item from its group (keeping the rest grouped). Pushes to undo stack. */
+    bool requestRemoveFromGroup(int itemId, bool logUndo = true);
+
     /** @brief Debugging function that checks consistency with Mlt objects */
     bool checkConsistency(const std::vector<int> &guideSnaps = {});
 

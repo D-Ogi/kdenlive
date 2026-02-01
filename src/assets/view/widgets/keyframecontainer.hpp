@@ -23,6 +23,7 @@ class QToolButton;
 class QToolBar;
 class TimecodeDisplay;
 class KSelectAction;
+class ExpressionWidget;
 class KeyframeMonitorHelper;
 class RotatedRectHelper;
 class KDualAction;
@@ -35,11 +36,14 @@ class KeyframeContainer : public QObject
     Q_OBJECT
 
 public:
+    enum ViewMode { TimelineView = 0, CurveEditorView = 1, ExpressionView = 2 };
     explicit KeyframeContainer(std::shared_ptr<AssetParameterModel> model, QModelIndex index, QSize frameSize, QWidget *parent, QFormLayout *layout);
     ~KeyframeContainer() override;
 
     /** @brief Add a new parameter to be managed using the same keyframe viewer. Also handles creation of KeyframeCurveEditor objects */
     void addParameter(const QPersistentModelIndex &index);
+    /** @brief Check all animated params for existing expressions and enable expression mode if any found. Call after all addParameter() calls. */
+    void checkInitialExpressionMode();
     int getPosition() const;
     /** @brief Returns the monitor scene required for this asset
      */
@@ -51,7 +55,7 @@ public:
      */
     bool keyframesVisible() const;
     void resetKeyframes();
-    int getCurrentView();
+    ViewMode currentViewMode() const;
     int minimumHeight() const;
     /** @brief Initialize the needed scene and monitor helper for the effect/asset. Should be called before addParameter when setting up the widget. */
     void initNeededSceneAndHelper();
@@ -96,7 +100,6 @@ private Q_SLOTS:
      */
     void slotSeekToKeyframe(int ix, int offset);
     void slotSeekToPos(int pos);
-    void slotToggleView();
     void monitorSeek(int pos);
 
 private:
@@ -104,7 +107,6 @@ private:
     QModelIndex m_index;
     QWidget *m_parent;
     QToolBar *m_toolbar;
-    QToolButton *m_viewswitch;
     std::shared_ptr<KeyframeModelList> m_keyframes;
     KeyframeView *m_keyframeview;
     KeyframeMonitorHelper *m_monitorHelper;
@@ -113,7 +115,6 @@ private:
     QVector<KeyframeCurveEditor *> m_curveeditorview;
     QStackedWidget *m_editorviewcontainer;
     KDualAction *m_addDeleteAction;
-    KDualAction *m_toggleViewAction;
     QAction *m_centerAction;
     QAction *m_copyAction;
     QAction *m_pasteAction;
@@ -136,6 +137,20 @@ private:
     std::unique_ptr<GeometryWidget> m_geom;
     int m_curveContainerHeight{0};
     int m_fixedHeight{0};
+
+    // View mode: Timeline / Curve Editor / Expression
+    ViewMode m_viewMode{TimelineView};
+    KSelectAction *m_viewSelector{nullptr};
+    QAction *m_timelineViewAction{nullptr};
+    QAction *m_curveViewAction{nullptr};
+    QAction *m_expressionViewAction{nullptr};
+    QToolButton *m_viewswitch{nullptr};
+    void setViewMode(ViewMode mode);
+
+    // Expression support (per-parameter tabs)
+    QTabWidget *m_expressionContainer{nullptr};
+    QVector<ExpressionWidget *> m_expressionWidgets;
+    QVector<QPersistentModelIndex> m_animatedIndices;
 
 Q_SIGNALS:
     void addIndex(QPersistentModelIndex ix);

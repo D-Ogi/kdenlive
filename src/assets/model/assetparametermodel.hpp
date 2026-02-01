@@ -326,7 +326,11 @@ public:
         Enum13Role,
         Enum14Role,
         Enum15Role,
-        Enum16Role
+        Enum16Role,
+        ExpressionRole,
+        ExpressionActiveRole,
+        ExpressionTemplateLinkRole,
+        ExpressionBaseValueRole
     };
 
     /** @brief Returns true if @param type is animated */
@@ -399,6 +403,48 @@ public:
     /** @brief Given an animation keyframe string, find out the keyframe type */
     static const QChar getKeyframeType(const QString keyframeString);
 
+    // ── Expression support ──────────────────────────────────────
+    /** @brief Set a JavaScript expression for the given parameter */
+    void setExpression(const QString &paramName, const QString &expression);
+    /** @brief Get the expression for the given parameter (empty if none) */
+    QString getExpression(const QString &paramName) const;
+    /** @brief Clear the expression for the given parameter */
+    void clearExpression(const QString &paramName);
+    /** @brief Check if the given parameter has an active expression */
+    bool hasExpression(const QString &paramName) const;
+
+    // ── Expression base value ─────────────────────────────────────
+    /** @brief Set the base value used by the `value` variable in expressions.
+     *  This is the slider value the user intended, separate from the baked result. */
+    void setExpressionBaseValue(const QString &paramName, double baseValue);
+    /** @brief Get the expression base value (returns current value if no expression active) */
+    double getExpressionBaseValue(const QString &paramName) const;
+
+    // ── Expression template linking ─────────────────────────────
+    /** @brief Link/unlink a parameter to a project expression template */
+    void setExpressionTemplateLink(const QString &paramName, const QString &templateId);
+    /** @brief Get the linked template ID (empty = detached) */
+    QString getExpressionTemplateLink(const QString &paramName) const;
+    /** @brief Check if a parameter is linked to a template */
+    bool hasExpressionTemplateLink(const QString &paramName) const;
+
+    // ── AnimatedRect per-component expressions ─────────────────
+    /** @brief Set a JS expression for one component of an AnimatedRect parameter.
+     *  @param componentIndex 0=X, 1=Y, 2=W, 3=H, 4=Opacity */
+    void setRectComponentExpression(const QString &paramName, int componentIndex, const QString &expression);
+    /** @brief Get the expression for one component (empty if none) */
+    QString getRectComponentExpression(const QString &paramName, int componentIndex) const;
+    /** @brief Clear the expression for one component */
+    void clearRectComponentExpression(const QString &paramName, int componentIndex);
+    /** @brief Check if any component of the given parameter has an expression */
+    bool hasRectComponentExpression(const QString &paramName) const;
+    /** @brief Get the base value for a specific rect component at clip in-point */
+    double getRectComponentBaseValue(const QString &paramName, int componentIndex) const;
+
+    /** @brief Restore expression data from MLT filter properties (kdenlive:expr.*).
+     *  Called during project load — does NOT trigger re-baking. */
+    void restoreExpressionsFromFilter();
+
 public Q_SLOTS:
     /** @brief Sets the value of a list of parameters
        @param params contains the pairs (parameter name, parameter value)
@@ -439,6 +485,11 @@ protected:
         QDomElement xml;
         QVariant value;
         QString name;
+        QString expression;                                ///< JavaScript expression (empty = disabled)
+        QString expressionTemplateId;                      ///< UUID of linked project template (empty = detached)
+        QVariant expressionBaseValue;                      ///< Snapshot of user's slider value when expression was set (the `value` variable in JS)
+        QMap<int, QString> componentExpressions;           ///< Per-component JS expressions for AnimatedRect (0=X,1=Y,2=W,3=H,4=Opacity)
+        QMap<int, QVariant> componentExpressionBaseValues; ///< Per-component base value snapshots; key -1 = full rect animation backup
     };
 
     QString m_assetId;
@@ -477,6 +528,8 @@ protected:
     const QString animationToPercentage(const QString &inputValue) const;
 
 private:
+    /** @brief Bake all active component expressions into a composite AnimatedRect string and apply to MLT */
+    void bakeRectExpressions(const QString &paramName);
     /** @brief extract individual components for a fake rect from its animation string **/
     void processFakeRect(const QString &name, const QString &paramValue, const QModelIndex &paramIndex);
     /** @brief extract individual components for a fake point from its animation string **/
@@ -494,4 +547,8 @@ Q_SIGNALS:
     void enabledChange(bool enabled);
     void hideKeyframesChange(bool);
     void showEffectZone(ObjectId id, QPair<int, int> inOut, bool checked);
+    /** @brief Emitted when a parameter's expression changes */
+    void expressionChanged(const QString &paramName, const QString &expression);
+    /** @brief Emitted when a parameter's template link changes */
+    void expressionTemplateLinkChanged(const QString &paramName, const QString &templateId);
 };

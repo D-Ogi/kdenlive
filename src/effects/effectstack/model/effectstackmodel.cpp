@@ -348,6 +348,27 @@ QDomElement EffectStackModel::toXml(QDomDocument &document)
         QVector<QPair<QString, QVariant>> params = sourceEffect->getAllParameters();
         for (const auto &param : std::as_const(params)) {
             Xml::setXmlProperty(sub, param.first, param.second.toString());
+            // Save expression attribute on the property element if present
+            QString expr = sourceEffect->getExpression(param.first);
+            if (!expr.isEmpty()) {
+                // Find the property element we just created/updated and add expression attribute
+                QDomNodeList props = sub.elementsByTagName(QStringLiteral("property"));
+                for (int p = 0; p < props.count(); ++p) {
+                    QDomElement propElem = props.item(p).toElement();
+                    if (propElem.attribute(QStringLiteral("name")) == param.first) {
+                        propElem.setAttribute(QStringLiteral("expression"), expr);
+                        // Save expression base value (the user's slider value, not the baked result)
+                        double baseVal = sourceEffect->getExpressionBaseValue(param.first);
+                        propElem.setAttribute(QStringLiteral("expressionbasevalue"), QString::number(baseVal, 'g', 15));
+                        // Save expression template link if present
+                        QString tmplId = sourceEffect->getExpressionTemplateLink(param.first);
+                        if (!tmplId.isEmpty()) {
+                            propElem.setAttribute(QStringLiteral("expressiontemplate"), tmplId);
+                        }
+                        break;
+                    }
+                }
+            }
         }
         container.appendChild(sub);
     }
@@ -381,6 +402,18 @@ QDomElement EffectStackModel::rowToXml(int row, QDomDocument &document)
     QVector<QPair<QString, QVariant>> params = sourceEffect->getAllParameters();
     for (const auto &param : std::as_const(params)) {
         Xml::setXmlProperty(sub, param.first, param.second.toString());
+        // Save expression attribute on the property element if present
+        QString expr = sourceEffect->getExpression(param.first);
+        if (!expr.isEmpty()) {
+            QDomNodeList props = sub.elementsByTagName(QStringLiteral("property"));
+            for (int p = 0; p < props.count(); ++p) {
+                QDomElement propElem = props.item(p).toElement();
+                if (propElem.attribute(QStringLiteral("name")) == param.first) {
+                    propElem.setAttribute(QStringLiteral("expression"), expr);
+                    break;
+                }
+            }
+        }
     }
     container.appendChild(sub);
     return container;
@@ -517,6 +550,24 @@ bool EffectStackModel::fromXml(const QDomElement &effectsXml, Fun &undo, Fun &re
             }
         }
         effect->setParameters(parameters);
+        // Restore expressions, base values, and template links from XML
+        for (int j = 0; j < params.count(); j++) {
+            QDomElement pnode = params.item(j).toElement();
+            const QString pName = pnode.attribute(QStringLiteral("name"));
+            const QString expr = pnode.attribute(QStringLiteral("expression"));
+            if (!expr.isEmpty()) {
+                // Restore base value first (before setExpression, which would snapshot the current value)
+                const QString baseValStr = pnode.attribute(QStringLiteral("expressionbasevalue"));
+                if (!baseValStr.isEmpty()) {
+                    effect->setExpressionBaseValue(pName, baseValStr.toDouble());
+                }
+                effect->setExpression(pName, expr);
+            }
+            const QString tmplId = pnode.attribute(QStringLiteral("expressiontemplate"));
+            if (!tmplId.isEmpty()) {
+                effect->setExpressionTemplateLink(pName, tmplId);
+            }
+        }
         Fun local_undo = removeItem_lambda(effect->getId());
         // TODO the parent should probably not always be the root
         Fun local_redo = addItem_lambda(effect, rootItem->getId());
@@ -1547,6 +1598,8 @@ void EffectStackModel::importEffects(const std::weak_ptr<Mlt::Service> &service,
             connect(effect.get(), &AssetParameterModel::modelChanged, this, &EffectStackModel::modelChanged);
             connect(effect.get(), &AssetParameterModel::replugEffect, this, &EffectStackModel::replugEffect, Qt::DirectConnection);
             connect(effect.get(), &AssetParameterModel::showEffectZone, this, &EffectStackModel::updateEffectZones);
+            // Restore expressions from MLT filter properties (saved by project save)
+            effect->restoreExpressionsFromFilter();
             Fun redo = addItem_lambda(effect, rootItem->getId());
             int clipIn = ptr->get_int("in");
             int clipOut = ptr->get_int("out");

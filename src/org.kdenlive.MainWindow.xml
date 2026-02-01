@@ -98,6 +98,15 @@
       <arg name="parentFolderId" type="s" direction="in"/>
       <arg name="binId" type="s" direction="out"/>
     </method>
+    <method name="scriptGetTitleXml">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="xml" type="s" direction="out"/>
+    </method>
+    <method name="scriptSetTitleXml">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="newXml" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
 
     <!-- Timeline -->
     <method name="scriptGetTrackCount">
@@ -182,6 +191,37 @@
       <arg name="success" type="b" direction="out"/>
     </method>
 
+    <!-- Compositions -->
+    <method name="scriptGetCompositions">
+      <arg name="compositions" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
+    </method>
+    <method name="scriptGetCompositionInfo">
+      <arg name="compoId" type="i" direction="in"/>
+      <arg name="info" type="a{sv}" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantMap"/>
+    </method>
+    <method name="scriptMoveComposition">
+      <arg name="compoId" type="i" direction="in"/>
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="position" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptResizeComposition">
+      <arg name="compoId" type="i" direction="in"/>
+      <arg name="newDuration" type="i" direction="in"/>
+      <arg name="fromRight" type="b" direction="in"/>
+      <arg name="resultDuration" type="i" direction="out"/>
+    </method>
+    <method name="scriptDeleteComposition">
+      <arg name="compoId" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetCompositionTypes">
+      <arg name="types" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
+    </method>
+
     <!-- Effects -->
     <method name="scriptAddClipEffect">
       <arg name="clipId" type="i" direction="in"/>
@@ -208,6 +248,40 @@
       <arg name="success" type="b" direction="out"/>
     </method>
 
+    <!-- Audio -->
+    <method name="scriptSetClipVolume">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="dB" type="d" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetClipVolume">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="dB" type="d" direction="out"/>
+    </method>
+    <method name="scriptSetAudioFade">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="fadeInFrames" type="i" direction="in"/>
+      <arg name="fadeOutFrames" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptSetTrackMute">
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="mute" type="b" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetTrackMute">
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="mute" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetAudioLevels">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="stream" type="i" direction="in"/>
+      <arg name="downsample" type="i" direction="in"/>
+      <arg name="mode" type="i" direction="in"/>
+      <arg name="levels" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
+    </method>
+
     <!-- Markers/Guides -->
     <method name="scriptAddGuide">
       <arg name="frame" type="i" direction="in"/>
@@ -228,6 +302,30 @@
       <arg name="success" type="b" direction="out"/>
     </method>
 
+    <!-- Clip-level Markers -->
+    <method name="scriptAddClipMarker">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="frame" type="i" direction="in"/>
+      <arg name="comment" type="s" direction="in"/>
+      <arg name="category" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetClipMarkers">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="markers" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
+    </method>
+    <method name="scriptDeleteClipMarker">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="frame" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptDeleteClipMarkersByCategory">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="category" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
     <!-- Playback -->
     <method name="scriptSeek">
       <arg name="frame" type="i" direction="in"/>
@@ -241,6 +339,247 @@
     <!-- Render -->
     <method name="scriptRender">
       <arg name="url" type="s" direction="in"/>
+    </method>
+
+    <!-- Groups -->
+    <method name="scriptGroupClips">
+      <arg name="itemIds" type="ai" direction="in"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QList&lt;int&gt;"/>
+      <arg name="groupId" type="i" direction="out"/>
+    </method>
+    <method name="scriptUngroupClips">
+      <arg name="itemId" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetGroupInfo">
+      <arg name="itemId" type="i" direction="in"/>
+      <arg name="info" type="a{sv}" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantMap"/>
+    </method>
+    <method name="scriptRemoveFromGroup">
+      <arg name="itemId" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Proxy Clips -->
+    <method name="scriptGetClipProxyStatus">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="status" type="a{sv}" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantMap"/>
+    </method>
+    <method name="scriptSetClipProxy">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="enabled" type="b" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptDeleteClipProxy">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptRebuildClipProxy">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Slip -->
+    <method name="scriptSlipClip">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="offset" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Effect Keyframes -->
+    <method name="scriptGetEffectKeyframes">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="effectIndex" type="i" direction="in"/>
+      <arg name="keyframes" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
+    </method>
+    <method name="scriptAddEffectKeyframe">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="effectIndex" type="i" direction="in"/>
+      <arg name="frame" type="i" direction="in"/>
+      <arg name="normalizedValue" type="d" direction="in"/>
+      <arg name="keyframeType" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptRemoveEffectKeyframe">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="effectIndex" type="i" direction="in"/>
+      <arg name="frame" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptUpdateEffectKeyframe">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="effectIndex" type="i" direction="in"/>
+      <arg name="oldFrame" type="i" direction="in"/>
+      <arg name="newFrame" type="i" direction="in"/>
+      <arg name="normalizedValue" type="d" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Sequences (multi-timeline) -->
+    <method name="scriptGetSequences">
+      <arg name="sequences" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
+    </method>
+    <method name="scriptGetActiveSequence">
+      <arg name="info" type="a{sv}" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantMap"/>
+    </method>
+    <method name="scriptSetActiveSequence">
+      <arg name="uuid" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Zones (timeline in/out points) -->
+    <method name="scriptGetZone">
+      <arg name="zone" type="a{sv}" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantMap"/>
+    </method>
+    <method name="scriptSetZone">
+      <arg name="inFrame" type="i" direction="in"/>
+      <arg name="outFrame" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptSetZoneIn">
+      <arg name="inFrame" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptSetZoneOut">
+      <arg name="outFrame" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptExtractZone">
+      <arg name="inFrame" type="i" direction="in"/>
+      <arg name="outFrame" type="i" direction="in"/>
+      <arg name="liftOnly" type="b" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Selection -->
+    <method name="scriptGetSelection">
+      <arg name="selection" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
+    </method>
+    <method name="scriptSetSelection">
+      <arg name="ids" type="ai" direction="in"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QList&lt;int&gt;"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptAddToSelection">
+      <arg name="itemId" type="i" direction="in"/>
+      <arg name="clear" type="b" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptClearSelection">
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptSelectAll">
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptSelectCurrentTrack">
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptSelectItems">
+      <arg name="trackIds" type="ai" direction="in"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QList&lt;int&gt;"/>
+      <arg name="startFrame" type="i" direction="in"/>
+      <arg name="endFrame" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Fill Frame -->
+    <method name="scriptFillFrame">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Preview / Frame Rendering -->
+    <method name="scriptRenderBinFrame">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="frame" type="i" direction="in"/>
+      <arg name="width" type="i" direction="in"/>
+      <arg name="height" type="i" direction="in"/>
+      <arg name="outputPath" type="s" direction="in"/>
+      <arg name="result" type="s" direction="out"/>
+    </method>
+    <method name="scriptRenderTimelineFrame">
+      <arg name="frame" type="i" direction="in"/>
+      <arg name="width" type="i" direction="in"/>
+      <arg name="height" type="i" direction="in"/>
+      <arg name="outputPath" type="s" direction="in"/>
+      <arg name="result" type="s" direction="out"/>
+    </method>
+
+    <!-- Subtitles -->
+    <method name="scriptGetSubtitles">
+      <arg name="subtitles" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
+    </method>
+    <method name="scriptAddSubtitle">
+      <arg name="startFrame" type="i" direction="in"/>
+      <arg name="endFrame" type="i" direction="in"/>
+      <arg name="text" type="s" direction="in"/>
+      <arg name="layer" type="i" direction="in"/>
+      <arg name="subtitleId" type="i" direction="out"/>
+    </method>
+    <method name="scriptEditSubtitle">
+      <arg name="subtitleId" type="i" direction="in"/>
+      <arg name="newText" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptDeleteSubtitle">
+      <arg name="subtitleId" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptExportSubtitles">
+      <arg name="filePath" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Subtitle Styles -->
+    <method name="scriptGetSubtitleStyles">
+      <arg name="global" type="b" direction="in"/>
+      <arg name="styles" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
+    </method>
+    <method name="scriptSetSubtitleStyle">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="keys" type="as" direction="in"/>
+      <arg name="values" type="as" direction="in"/>
+      <arg name="global" type="b" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptDeleteSubtitleStyle">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="global" type="b" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptSetSubtitleStyleName">
+      <arg name="subtitleId" type="i" direction="in"/>
+      <arg name="styleName" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Bin Relink -->
+    <method name="scriptRelinkBinClip">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="newFilePath" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Undo / Redo -->
+    <method name="scriptUndo">
+      <arg name="steps" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptRedo">
+      <arg name="steps" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptUndoStatus">
+      <arg name="status" type="s" direction="out"/>
     </method>
 
     <!-- Additional -->

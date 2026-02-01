@@ -508,6 +508,19 @@ QDomDocument EffectItemModel::toXml() const
         QDomElement xmlParam = doc.createElement(QStringLiteral("property"));
         effect.appendChild(xmlParam);
         xmlParam.setAttribute(QStringLiteral("name"), param.first);
+        // Save expression as attribute if present (backward compatible)
+        QString expr = getExpression(param.first);
+        if (!expr.isEmpty()) {
+            xmlParam.setAttribute(QStringLiteral("expression"), expr);
+            // Save expression base value (the user's intended slider value)
+            double baseVal = getExpressionBaseValue(param.first);
+            xmlParam.setAttribute(QStringLiteral("expressionbasevalue"), QString::number(baseVal, 'g', 15));
+        }
+        // Save expression template link if present
+        QString tmplId = getExpressionTemplateLink(param.first);
+        if (!tmplId.isEmpty()) {
+            xmlParam.setAttribute(QStringLiteral("expressiontemplate"), tmplId);
+        }
         QString value;
         value = param.second.toString();
         QDomText val = doc.createTextNode(value);
