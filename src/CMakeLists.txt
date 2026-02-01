@@ -47,6 +47,7 @@ add_subdirectory(capture)
 add_subdirectory(dialogs)
 add_subdirectory(doc)
 add_subdirectory(effects)
+add_subdirectory(expressions)
 add_subdirectory(jobs)
 add_subdirectory(lib)
 add_subdirectory(library)
@@ -279,6 +280,7 @@ target_link_libraries(kdenliveLib PUBLIC
 target_link_libraries(kdenliveLib PUBLIC KDAB::kddockwidgets)
 
 target_link_libraries(kdenliveLib PUBLIC FFmpeg::FFmpeg)
+target_link_libraries(kdenliveLib PUBLIC quickjs_lib)
 
 if(WIN32)
     target_link_libraries(kdenliveLib PUBLIC d3d11 d3dcompiler)

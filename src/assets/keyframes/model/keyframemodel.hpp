@@ -76,11 +76,12 @@ protected:
     bool removeAllKeyframes();
     bool removeAllKeyframes(Fun &undo, Fun &redo);
     bool removeNextKeyframes(GenTime pos, Fun &undo, Fun &redo);
-    QList<GenTime> getKeyframePos() const;
     /** @brief Same function but accumulates undo/redo */
     bool removeKeyframe(GenTime pos, Fun &undo, Fun &redo, bool notify = true, bool updateSelection = true, bool allowedToFail = false);
 
 public:
+    /** @brief Returns positions of all keyframes */
+    QList<GenTime> getKeyframePos() const;
     /** @brief moves a keyframe
        @param oldPos is the old position of the keyframe
        @param pos defines the new position of the keyframe, relative to the clip

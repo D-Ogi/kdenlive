@@ -6,6 +6,8 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "mainwindow.h"
 #include "assets/assetpanel.hpp"
+#include "assets/keyframes/model/keyframemodel.hpp"
+#include "assets/keyframes/model/keyframemodellist.hpp"
 #include "audiomixer/mixermanager.hpp"
 #include "bin/clipcreator.hpp"
 #include "bin/generators/generators.h"
@@ -23,9 +25,12 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include "dialogs/wizard.h"
 #include "doc/docundostack.hpp"
 #include "doc/kdenlivedoc.h"
+#include "doc/kthumb.h"
 #include "effects/effectbasket.h"
 #include "effects/effectlist/view/effectlistwidget.hpp"
+#include "effects/effectstack/model/effectitemmodel.hpp"
 #include "effects/effectstack/model/effectstackmodel.hpp"
+#include "expressions/expressiontemplatedialog.h"
 #include "jobs/audiolevels/audiolevelstask.h"
 #include "jobs/customjobtask.h"
 #include "jobs/scenesplittask.h"
@@ -44,6 +49,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include <QDBusInterface>
 #endif
 
+#include "bin/model/markerlistmodel.hpp"
 #include "dialogs/markerdialog.h"
 #include "dialogs/textbasededit.h"
 #include "dialogs/timeremap.h"
@@ -65,6 +71,8 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include "project/dialogs/temporarydata.h"
 #include "project/projectmanager.h"
 #include "scopes/scopemanager.h"
+#include "timeline2/model/timelinefunctions.hpp"
+#include "timeline2/model/timelineitemmodel.hpp"
 #include "timeline2/view/timelinecontroller.h"
 #include "timeline2/view/timelinetabs.hpp"
 #include "timeline2/view/timelinewidget.h"
@@ -183,6 +191,15 @@ void MainWindow::init()
 
     // Handle communication with the renderer app
     new RenderServer(this);
+
+#ifndef NODBUS
+    // Register MainWindow on D-Bus for scripting API access
+    {
+        bool ok = QDBusConnection::sessionBus().registerObject(QStringLiteral("/MainWindow"), this,
+                                                               QDBusConnection::ExportScriptableSlots | QDBusConnection::ExportScriptableSignals);
+        qDebug() << "D-Bus: registerObject /MainWindow on" << this << "->" << ok;
+    }
+#endif
     QString defaultProfile = KdenliveSettings::default_profile();
 
     pCore->setCurrentProfile(defaultProfile.isEmpty() ? ProjectManager::getDefaultProjectFormat() : defaultProfile);
@@ -196,11 +213,8 @@ void MainWindow::init()
         KdenliveSettings::setDefault_profile(QStringLiteral("atsc_1080p_25"));
     }
 
-    // Disable movit until it's stable
-    m_gpuAllowed = false;
-    KdenliveSettings::setGpu_accel(false);
-
-    // m_gpuAllowed = EffectsRepository::get()->hasInternalEffect(QStringLiteral("glsl.manager"));
+    // GPU acceleration via Movit — detect whether glsl.manager is available
+    m_gpuAllowed = EffectsRepository::get()->hasInternalEffect(QStringLiteral("glsl.manager"));
     setCentralWidget(mainDockWindow);
     mainDockWindow->show();
 
@@ -543,6 +557,14 @@ void MainWindow::init()
         // Define a date for first check
         KdenliveSettings::setLastCacheCheck(QDateTime::currentDateTime());
     }
+
+    // Expression Templates menu action
+    QAction *exprTemplatesAction = new QAction(i18n("Expression Templates..."), this);
+    connect(exprTemplatesAction, &QAction::triggered, this, [this]() {
+        ExpressionTemplateDialog dlg(nullptr, QString(), this);
+        dlg.exec();
+    });
+    addAction(QStringLiteral("expression_templates"), exprTemplatesAction);
 
     // Build effects menu
     m_effectsMenu = new QMenu(i18n("Add Effect"), this);
@@ -2564,10 +2586,9 @@ void MainWindow::slotRenderProject()
 
 void MainWindow::slotCheckRenderStatus()
 {
-    // Make sure there are no missing clips
-    // TODO
-    /*if (m_renderWidget)
-        m_renderWidget->missingClips(pCore->bin()->hasMissingClips());*/
+    // Stub: missing-clip check was removed upstream when the render
+    // widget lost its missingClips() method.  Kept as a no-op because
+    // the slot is still connected from slotUpdateRenderWidgetStuff().
 }
 
 void MainWindow::setRenderingProgress(const QString &url, int progress, int frame)
@@ -2615,6 +2636,1789 @@ void MainWindow::scriptRender(const QString &url)
     slotRenderProject();
     m_renderWidget->slotPrepareExport(true);
 }
+
+// ── Scripting API Implementation (D-Bus: org.kde.kdenlive.scripting) ────────
+
+// ── Project Management ─────────────────────────────────────────────────────
+
+QString MainWindow::scriptNewProject(const QString &name)
+{
+    Q_UNUSED(name)
+    // Kdenlive creates "untitled" projects; we trigger new file and return the name
+    pCore->projectManager()->newFile(false);
+    if (pCore->currentDoc()) {
+        return pCore->currentDoc()->url().fileName();
+    }
+    return QString();
+}
+
+bool MainWindow::scriptOpenProject(const QString &filePath)
+{
+    if (filePath.isEmpty()) return false;
+    pCore->projectManager()->openFile(QUrl::fromLocalFile(filePath));
+    return pCore->currentDoc() != nullptr;
+}
+
+bool MainWindow::scriptSaveProject()
+{
+    if (!pCore->currentDoc()) return false;
+    pCore->projectManager()->saveFile();
+    return true;
+}
+
+bool MainWindow::scriptSaveProjectAs(const QString &filePath)
+{
+    if (!pCore->currentDoc() || filePath.isEmpty()) return false;
+    pCore->projectManager()->saveFileAs(filePath);
+    return true;
+}
+
+bool MainWindow::scriptUndo(int steps)
+{
+    if (!m_commandStack || !m_commandStack->activeStack()) return false;
+    int done = 0;
+    for (int i = 0; i < steps; ++i) {
+        if (!m_commandStack->activeStack()->canUndo()) break;
+        m_commandStack->activeStack()->undo();
+        ++done;
+    }
+    return done > 0;
+}
+
+bool MainWindow::scriptRedo(int steps)
+{
+    if (!m_commandStack || !m_commandStack->activeStack()) return false;
+    int done = 0;
+    for (int i = 0; i < steps; ++i) {
+        if (!m_commandStack->activeStack()->canRedo()) break;
+        m_commandStack->activeStack()->redo();
+        ++done;
+    }
+    return done > 0;
+}
+
+QString MainWindow::scriptUndoStatus()
+{
+    if (!m_commandStack || !m_commandStack->activeStack()) {
+        return QStringLiteral("can_undo=false;can_redo=false;undo_text=;redo_text=;index=0;count=0");
+    }
+    auto *stack = m_commandStack->activeStack();
+    return QStringLiteral("can_undo=%1;can_redo=%2;undo_text=%3;redo_text=%4;index=%5;count=%6")
+        .arg(stack->canUndo() ? QStringLiteral("true") : QStringLiteral("false"), stack->canRedo() ? QStringLiteral("true") : QStringLiteral("false"),
+             stack->undoText(), stack->redoText(), QString::number(stack->index()), QString::number(stack->count()));
+}
+
+QString MainWindow::scriptGetProjectName()
+{
+    if (!pCore->currentDoc()) return QString();
+    return pCore->currentDoc()->url().fileName();
+}
+
+QString MainWindow::scriptGetProjectPath()
+{
+    if (!pCore->currentDoc()) return QString();
+    return pCore->currentDoc()->url().toLocalFile();
+}
+
+double MainWindow::scriptGetProjectFps()
+{
+    return pCore->getCurrentFps();
+}
+
+int MainWindow::scriptGetProjectResolutionWidth()
+{
+    if (!pCore->currentDoc()) return 0;
+    return pCore->currentDoc()->width();
+}
+
+int MainWindow::scriptGetProjectResolutionHeight()
+{
+    if (!pCore->currentDoc()) return 0;
+    return pCore->currentDoc()->height();
+}
+
+QString MainWindow::scriptGetProjectProperty(const QString &key)
+{
+    if (!pCore->currentDoc()) return QString();
+    return pCore->currentDoc()->getDocumentProperty(key);
+}
+
+bool MainWindow::scriptSetProjectProperty(const QString &key, const QString &value)
+{
+    if (!pCore->currentDoc()) return false;
+    pCore->currentDoc()->setDocumentProperty(key, value);
+    return true;
+}
+
+// ── Media Pool (Bin) ───────────────────────────────────────────────────────
+
+QStringList MainWindow::scriptImportMedia(const QStringList &filePaths, const QString &folderId)
+{
+    QStringList binIds;
+    if (!pCore->currentDoc()) return binIds;
+
+    auto model = pCore->projectItemModel();
+    QString folder = folderId;
+    if (folder == QStringLiteral("-1")) {
+        folder = model->getRootFolder()->clipId();
+    }
+
+    for (const QString &path : filePaths) {
+        // Check if clip already exists in bin
+        QStringList existing = model->getClipByUrl(QFileInfo(path));
+        if (!existing.isEmpty()) {
+            binIds.append(existing.first());
+            continue;
+        }
+        // Import new clip
+        ClipCreator::createClipFromFile(path, folder, model);
+        // Retrieve the newly created bin ID
+        QStringList newIds = model->getClipByUrl(QFileInfo(path));
+        if (!newIds.isEmpty()) {
+            binIds.append(newIds.first());
+        }
+    }
+    return binIds;
+}
+
+QString MainWindow::scriptCreateFolder(const QString &name, const QString &parentId)
+{
+    if (!pCore->currentDoc()) return QString();
+
+    auto model = pCore->projectItemModel();
+    QString parent = parentId;
+    if (parent == QStringLiteral("-1")) {
+        parent = model->getRootFolder()->clipId();
+    }
+
+    QString newId;
+    Fun undo = []() { return true; };
+    Fun redo = []() { return true; };
+    if (model->requestAddFolder(newId, name, parent, undo, redo)) {
+        pCore->pushUndo(undo, redo, i18n("Create folder"));
+        return newId;
+    }
+    return QString();
+}
+
+QStringList MainWindow::scriptGetAllClipIds()
+{
+    QStringList result;
+    if (!pCore->currentDoc()) return result;
+
+    auto model = pCore->projectItemModel();
+    std::vector<QString> ids = model->getAllClipIds();
+    for (const QString &id : ids) {
+        result.append(id);
+    }
+    return result;
+}
+
+QStringList MainWindow::scriptGetFolderClipIds(const QString &folderId)
+{
+    QStringList result;
+    if (!pCore->currentDoc()) return result;
+
+    auto model = pCore->projectItemModel();
+    // Get folder and iterate its children
+    auto folder = model->getFolderByBinId(folderId);
+    if (!folder) return result;
+
+    int count = folder->childCount();
+    for (int i = 0; i < count; i++) {
+        auto child = std::static_pointer_cast<AbstractProjectItem>(folder->child(i));
+        if (child && child->itemType() == AbstractProjectItem::ClipItem) {
+            result.append(child->clipId());
+        }
+    }
+    return result;
+}
+
+QVariantMap MainWindow::scriptGetClipProperties(const QString &binId)
+{
+    QVariantMap props;
+    if (!pCore->currentDoc()) return props;
+
+    auto clip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (!clip) return props;
+
+    // Use cached AbstractProjectItem members instead of ClipController methods
+    // that acquire m_producerLock. The producer lock can deadlock when called
+    // from the main thread (D-Bus handler) while a background thread holds the
+    // write lock and waits for the main event loop.
+    props[QStringLiteral("name")] = clip->getData(AbstractProjectItem::DataName);
+    props[QStringLiteral("type")] = clip->getData(AbstractProjectItem::ClipType);
+    props[QStringLiteral("url")] = clip->clipUrl();
+    props[QStringLiteral("id")] = binId;
+
+    // Duration: convert cached timecode string to frames.
+    // Format is SMPTE: "HH:MM:SS:FF" or "HH:MM:SS;FF" (drop-frame).
+    QString durationStr = clip->getData(AbstractProjectItem::DataDuration).toString();
+    int fps = qRound(pCore->getCurrentFps());
+    if (!durationStr.isEmpty() && fps > 0) {
+        // Replace semicolons (drop-frame separator) with colons for uniform parsing
+        QString normalized = durationStr.replace(QLatin1Char(';'), QLatin1Char(':'));
+        QStringList parts = normalized.split(QLatin1Char(':'));
+        if (parts.size() == 4) {
+            props[QStringLiteral("duration")] = parts[0].toInt() * 3600 * fps + parts[1].toInt() * 60 * fps + parts[2].toInt() * fps + parts[3].toInt();
+        } else {
+            props[QStringLiteral("duration")] = 0;
+        }
+    } else {
+        props[QStringLiteral("duration")] = 0;
+    }
+
+    return props;
+}
+
+bool MainWindow::scriptDeleteBinClip(const QString &binId)
+{
+    if (!pCore->currentDoc()) return false;
+
+    auto model = pCore->projectItemModel();
+    auto clip = model->getClipByBinID(binId);
+    if (!clip) return false;
+
+    Fun undo = []() { return true; };
+    Fun redo = []() { return true; };
+    bool result = model->requestBinClipDeletion(clip, undo, redo);
+    if (result) {
+        pCore->pushUndo(undo, redo, i18n("Delete clip"));
+    }
+    return result;
+}
+
+bool MainWindow::scriptRelinkBinClip(const QString &binId, const QString &newFilePath)
+{
+    if (!QFile::exists(newFilePath)) {
+        qWarning() << "scriptRelinkBinClip: file does not exist:" << newFilePath;
+        return false;
+    }
+    auto clip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (!clip) {
+        qWarning() << "scriptRelinkBinClip: clip not found:" << binId;
+        return false;
+    }
+    clip->setProducerProperty(QStringLiteral("resource"), newFilePath);
+    clip->setProducerProperty(QStringLiteral("kdenlive:originalurl"), newFilePath);
+    clip->reloadProducer(false, false, false);
+    return true;
+}
+
+QString MainWindow::scriptCreateTitleClip(const QString &titleXml, int durationFrames, const QString &clipName, const QString &parentFolderId)
+{
+    if (!pCore->currentDoc()) return QStringLiteral("-1");
+    auto model = pCore->projectItemModel();
+    QString folder = parentFolderId;
+    if (folder == QStringLiteral("-1")) folder = model->getRootFolder()->clipId();
+
+    std::unordered_map<QString, QString> properties;
+    properties[QStringLiteral("xmldata")] = titleXml;
+
+    return ClipCreator::createTitleClip(properties, durationFrames, clipName.isEmpty() ? i18n("Title clip") : clipName, folder, model);
+}
+
+QString MainWindow::scriptGetTitleXml(const QString &binId)
+{
+    if (!pCore->currentDoc()) return QString();
+    auto clip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (!clip) return QString();
+    return clip->getProducerProperty(QStringLiteral("xmldata"));
+}
+
+bool MainWindow::scriptSetTitleXml(const QString &binId, const QString &newXml)
+{
+    if (!pCore->currentDoc()) return false;
+    auto clip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (!clip) return false;
+    clip->setProducerProperty(QStringLiteral("xmldata"), newXml);
+    clip->reloadProducer(false, false, false);
+    return true;
+}
+
+// ── Timeline ───────────────────────────────────────────────────────────────
+
+int MainWindow::scriptGetTrackCount(const QString &trackType)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return 0;
+
+    QPair<int, int> counts = timeline->model()->getAVtracksCount();
+    if (trackType == QStringLiteral("audio")) {
+        return counts.second;
+    }
+    return counts.first; // video
+}
+
+QVariantMap MainWindow::scriptGetTrackInfo(int trackIndex)
+{
+    QVariantMap info;
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return info;
+
+    auto model = timeline->model();
+    QList<int> trackIds = model->getTracksIds(false); // video
+    QList<int> audioIds = model->getTracksIds(true);  // audio
+    QList<int> allIds;
+    allIds.append(trackIds);
+    allIds.append(audioIds);
+
+    if (trackIndex < 0 || trackIndex >= allIds.size()) return info;
+
+    int trackId = allIds.at(trackIndex);
+    info[QStringLiteral("id")] = trackId;
+    info[QStringLiteral("name")] = model->getTrackTagById(trackId);
+    info[QStringLiteral("audio")] = model->isAudioTrack(trackId);
+    info[QStringLiteral("position")] = model->getTrackPosition(trackId);
+    return info;
+}
+
+QVariantList MainWindow::scriptGetAllTracksInfo()
+{
+    QVariantList result;
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return result;
+
+    auto model = timeline->model();
+    QList<int> videoIds = model->getTracksIds(false);
+    QList<int> audioIds = model->getTracksIds(true);
+
+    for (int trackId : videoIds) {
+        QVariantMap info;
+        info[QStringLiteral("id")] = trackId;
+        info[QStringLiteral("name")] = model->getTrackTagById(trackId);
+        info[QStringLiteral("audio")] = false;
+        info[QStringLiteral("position")] = model->getTrackPosition(trackId);
+        int hide = model->getTrackProperty(trackId, QStringLiteral("hide")).toInt();
+        info[QStringLiteral("mute")] = bool(hide & 2);
+        info[QStringLiteral("hidden")] = bool(hide & 1);
+        result.append(info);
+    }
+    for (int trackId : audioIds) {
+        QVariantMap info;
+        info[QStringLiteral("id")] = trackId;
+        info[QStringLiteral("name")] = model->getTrackTagById(trackId);
+        info[QStringLiteral("audio")] = true;
+        info[QStringLiteral("position")] = model->getTrackPosition(trackId);
+        int hide = model->getTrackProperty(trackId, QStringLiteral("hide")).toInt();
+        info[QStringLiteral("mute")] = bool(hide & 2);
+        info[QStringLiteral("hidden")] = bool(hide & 1);
+        result.append(info);
+    }
+    return result;
+}
+
+int MainWindow::scriptAddTrack(const QString &name, bool audioTrack)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return -1;
+
+    int newId = -1;
+    int pos = timeline->model()->getTracksCount();
+    bool success = timeline->model()->requestTrackInsertion(pos, newId, name, audioTrack);
+    return success ? newId : -1;
+}
+
+int MainWindow::scriptInsertClip(const QString &binClipId, int trackId, int position)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return -1;
+
+    int newClipId = -1;
+    bool success = timeline->model()->requestClipInsertion(binClipId, trackId, position, newClipId,
+                                                           true, // logUndo
+                                                           true, // refreshView
+                                                           false // useTargets
+    );
+    return success ? newClipId : -1;
+}
+
+QVariantList MainWindow::scriptInsertClipsSequentially(const QStringList &binClipIds, int trackId, int startPosition)
+{
+    QVariantList result;
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return result;
+
+    int position = startPosition;
+    for (const QString &binId : binClipIds) {
+        int newClipId = -1;
+        bool success = timeline->model()->requestClipInsertion(binId, trackId, position, newClipId, true, true, false);
+        if (success && newClipId >= 0) {
+            result.append(newClipId);
+            // Advance position by the clip's duration
+            int duration = timeline->model()->getClipPlaytime(newClipId);
+            position += duration;
+        } else {
+            result.append(-1);
+        }
+    }
+    return result;
+}
+
+bool MainWindow::scriptMoveClip(int clipId, int trackId, int position)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+
+    return timeline->model()->requestClipMove(clipId, trackId, position,
+                                              true,  // moveMirrorTracks
+                                              true,  // updateView
+                                              true); // logUndo
+}
+
+int MainWindow::scriptResizeClip(int clipId, int newDuration, bool fromRight)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return -1;
+
+    return timeline->model()->requestItemResize(clipId, newDuration, fromRight, true);
+}
+
+bool MainWindow::scriptDeleteTimelineClip(int clipId)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+
+    return timeline->model()->requestItemDeletion(clipId, true);
+}
+
+QVariantList MainWindow::scriptGetClipsOnTrack(int trackId)
+{
+    QVariantList result;
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return result;
+
+    auto model = timeline->model();
+    // Get all clips in range [0, max) on this track
+    std::unordered_set<int> clipIds = model->getItemsInRange(trackId, 0, -1, false);
+    for (int cid : clipIds) {
+        if (!model->isClip(cid)) continue;
+        QVariantMap info;
+        info[QStringLiteral("id")] = cid;
+        info[QStringLiteral("position")] = model->getClipPosition(cid);
+        info[QStringLiteral("duration")] = model->getClipPlaytime(cid);
+        info[QStringLiteral("trackId")] = model->getClipTrackId(cid);
+        info[QStringLiteral("in")] = model->getClipIn(cid);
+        QString binId = model->getClipBinId(cid);
+        info[QStringLiteral("binId")] = binId;
+        // Resolve human-readable name and source URL from bin
+        if (!binId.isEmpty() && pCore->bin()) {
+            info[QStringLiteral("name")] = pCore->bin()->getBinClipName(binId);
+        }
+        auto clip = pCore->projectItemModel()->getClipByBinID(binId);
+        if (clip) {
+            info[QStringLiteral("url")] = clip->clipUrl();
+        }
+        result.append(info);
+    }
+    return result;
+}
+
+QVariantMap MainWindow::scriptGetTimelineClipInfo(int clipId)
+{
+    QVariantMap info;
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return info;
+
+    auto model = timeline->model();
+    if (!model->isClip(clipId)) return info;
+
+    info[QStringLiteral("id")] = clipId;
+    info[QStringLiteral("position")] = model->getClipPosition(clipId);
+    info[QStringLiteral("duration")] = model->getClipPlaytime(clipId);
+    info[QStringLiteral("trackId")] = model->getClipTrackId(clipId);
+    auto inOut = model->getClipInOut(clipId);
+    info[QStringLiteral("in")] = inOut.first;
+    info[QStringLiteral("out")] = inOut.second;
+    QString binId = model->getClipBinId(clipId);
+    info[QStringLiteral("binId")] = binId;
+
+    // Resolve bin clip name and source URL
+    if (!binId.isEmpty() && pCore->bin()) {
+        info[QStringLiteral("name")] = pCore->bin()->getBinClipName(binId);
+    }
+    auto clip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (clip) {
+        info[QStringLiteral("url")] = clip->clipUrl();
+        info[QStringLiteral("maxDuration")] = (int)clip->frameDuration();
+    }
+    return info;
+}
+
+bool MainWindow::scriptSlipClip(int clipId, int offset)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->controller()) return false;
+    auto model = timeline->model();
+    if (!model || !model->isClip(clipId)) return false;
+
+    // Save and replace selection
+    QList<int> prevSel = timeline->controller()->selection();
+    timeline->controller()->selectItems({clipId});
+
+    // Perform slip
+    model->requestSlipSelection(offset, true);
+
+    // Restore selection
+    if (prevSel.isEmpty()) {
+        timeline->controller()->selectItems(QList<int>());
+    } else {
+        timeline->controller()->selectItems(prevSel);
+    }
+
+    return true;
+}
+
+bool MainWindow::scriptCutClip(int clipId, int position)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+
+    return TimelineFunctions::requestClipCut(timeline->model(), clipId, position);
+}
+
+// ── Transitions & Mixes ───────────────────────────────────────────────────
+
+bool MainWindow::scriptAddMix(int clipIdA, int clipIdB, int durationFrames)
+{
+    Q_UNUSED(clipIdA)
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+
+    // Use the mix request — Kdenlive creates same-track mixes via the second clip
+    int trackId = timeline->model()->getClipTrackId(clipIdB);
+    int posB = timeline->model()->getClipPosition(clipIdB);
+    std::pair<int, int> clipIds = {clipIdA, clipIdB};
+    std::pair<int, int> mixDurations = {durationFrames / 2, durationFrames - durationFrames / 2};
+
+    Fun undo = []() { return true; };
+    Fun redo = []() { return true; };
+    bool success = timeline->model()->requestClipMix(QStringLiteral("luma"), clipIds, mixDurations, trackId, posB, true, true, true, undo, redo, false);
+    if (success) {
+        pCore->pushUndo(undo, redo, i18n("Add mix"));
+    }
+    return success;
+}
+
+int MainWindow::scriptAddComposition(const QString &transitionId, int trackId, int position, int duration)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return -1;
+
+    int newId = -1;
+    bool success = timeline->model()->requestCompositionInsertion(transitionId, trackId, position, duration, nullptr, newId, true);
+    return success ? newId : -1;
+}
+
+bool MainWindow::scriptRemoveMix(int clipId)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+
+    return timeline->model()->requestItemDeletion(clipId, true);
+}
+
+// ── Compositions ──────────────────────────────────────────────────────────
+
+QVariantList MainWindow::scriptGetCompositions()
+{
+    QVariantList result;
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return result;
+
+    auto model = timeline->model();
+    const QList<int> ids = model->getCompositionIds();
+    for (int compoId : ids) {
+        QVariantMap info;
+        info[QStringLiteral("id")] = compoId;
+        info[QStringLiteral("trackId")] = model->getCompositionTrackId(compoId);
+        info[QStringLiteral("position")] = model->getCompositionPosition(compoId);
+        info[QStringLiteral("duration")] = model->getCompositionPlaytime(compoId);
+        auto paramModel = model->getCompositionParameterModel(compoId);
+        if (paramModel) {
+            info[QStringLiteral("type")] = paramModel->getAssetId();
+        }
+        result.append(info);
+    }
+    return result;
+}
+
+QVariantMap MainWindow::scriptGetCompositionInfo(int compoId)
+{
+    QVariantMap result;
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return result;
+    if (!timeline->model()->isComposition(compoId)) return result;
+
+    auto model = timeline->model();
+    result[QStringLiteral("id")] = compoId;
+    result[QStringLiteral("trackId")] = model->getCompositionTrackId(compoId);
+    result[QStringLiteral("position")] = model->getCompositionPosition(compoId);
+    result[QStringLiteral("duration")] = model->getCompositionPlaytime(compoId);
+    auto paramModel = model->getCompositionParameterModel(compoId);
+    if (paramModel) {
+        result[QStringLiteral("type")] = paramModel->getAssetId();
+    }
+    return result;
+}
+
+bool MainWindow::scriptMoveComposition(int compoId, int trackId, int position)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->isComposition(compoId)) return false;
+    return timeline->model()->requestCompositionMove(compoId, trackId, position, true, true);
+}
+
+int MainWindow::scriptResizeComposition(int compoId, int newDuration, bool fromRight)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return -1;
+    if (!timeline->model()->isComposition(compoId)) return -1;
+    return timeline->model()->requestItemResize(compoId, newDuration, fromRight, true);
+}
+
+bool MainWindow::scriptDeleteComposition(int compoId)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->isComposition(compoId)) return false;
+    return timeline->model()->requestItemDeletion(compoId, true);
+}
+
+QVariantList MainWindow::scriptGetCompositionTypes()
+{
+    QVariantList result;
+    auto allTransitions = TransitionsRepository::get()->getNames();
+    for (const auto &pair : allTransitions) {
+        QVariantMap info;
+        info[QStringLiteral("id")] = pair.first;
+        info[QStringLiteral("name")] = pair.second;
+        result.append(info);
+    }
+    return result;
+}
+
+// ── Effects ───────────────────────────────────────────────────────────────
+
+bool MainWindow::scriptAddClipEffect(int clipId, const QString &effectId, const QStringList &paramKeys, const QStringList &paramValues)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->isClip(clipId)) return false;
+
+    QMap<QString, QString> params;
+    int count = qMin(paramKeys.size(), paramValues.size());
+    for (int i = 0; i < count; ++i) {
+        params.insert(paramKeys.at(i), paramValues.at(i));
+    }
+
+    auto stack = timeline->model()->getClipEffectStackModel(clipId);
+    if (!stack) return false;
+    return stack->appendEffect(effectId, false, params);
+}
+
+bool MainWindow::scriptRemoveClipEffect(int clipId, const QString &effectId)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->isClip(clipId)) return false;
+
+    auto stack = timeline->model()->getClipEffectStackModel(clipId);
+    if (!stack || !stack->hasFilter(effectId)) return false;
+    Fun undo = []() { return true; };
+    Fun redo = []() { return true; };
+    QString effectName;
+    stack->removeEffectWithUndo(effectId, effectName, -1, undo, redo);
+    return !effectName.isEmpty();
+}
+
+QString MainWindow::scriptGetClipEffects(int clipId)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return QString();
+    if (!timeline->model()->isClip(clipId)) return QString();
+
+    auto stack = timeline->model()->getClipEffectStackModel(clipId);
+    if (!stack) return QString();
+    return stack->effectNames();
+}
+
+// ── Effect Keyframes ──────────────────────────────────────────────────────
+
+static std::shared_ptr<KeyframeModelList> getEffectKeyframeModelAt(const std::shared_ptr<EffectStackModel> &stack, int effectIndex)
+{
+    if (!stack || effectIndex < 0 || effectIndex >= stack->rowCount()) return nullptr;
+    auto effect = std::static_pointer_cast<EffectItemModel>(stack->getEffectStackRow(effectIndex));
+    if (!effect) return nullptr;
+    return effect->getKeyframeModel();
+}
+
+static QString keyframeTypeName(int type)
+{
+    switch (type) {
+    case mlt_keyframe_linear:
+        return QStringLiteral("linear");
+    case mlt_keyframe_discrete:
+        return QStringLiteral("discrete");
+    case mlt_keyframe_smooth_natural:
+        return QStringLiteral("smooth");
+    case mlt_keyframe_bounce_in:
+        return QStringLiteral("bounce_in");
+    case mlt_keyframe_bounce_out:
+        return QStringLiteral("bounce_out");
+    case mlt_keyframe_cubic_in:
+        return QStringLiteral("cubic_in");
+    case mlt_keyframe_cubic_out:
+        return QStringLiteral("cubic_out");
+    case mlt_keyframe_exponential_in:
+        return QStringLiteral("exponential_in");
+    case mlt_keyframe_exponential_out:
+        return QStringLiteral("exponential_out");
+    case mlt_keyframe_circular_in:
+        return QStringLiteral("circular_in");
+    case mlt_keyframe_circular_out:
+        return QStringLiteral("circular_out");
+    case mlt_keyframe_elastic_in:
+        return QStringLiteral("elastic_in");
+    case mlt_keyframe_elastic_out:
+        return QStringLiteral("elastic_out");
+    default:
+        return QStringLiteral("linear");
+    }
+}
+
+QVariantList MainWindow::scriptGetEffectKeyframes(int clipId, int effectIndex)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return {};
+    if (!timeline->model()->isClip(clipId)) return {};
+
+    auto stack = timeline->model()->getClipEffectStackModel(clipId);
+    auto listModel = getEffectKeyframeModelAt(stack, effectIndex);
+    if (!listModel) return {};
+
+    double fps = pCore->getCurrentFps();
+    // Get the first (primary) keyframe model from the list
+    KeyframeModel *kfModel = listModel->getKeyModel();
+    if (!kfModel) return {};
+
+    QList<GenTime> positions = kfModel->getKeyframePos();
+    QVariantList result;
+    for (const GenTime &pos : positions) {
+        bool ok = false;
+        Keyframe kf = kfModel->getKeyframe(pos, &ok);
+        if (!ok) continue;
+        QVariantMap m;
+        m[QStringLiteral("frame")] = pos.frames(fps);
+        m[QStringLiteral("type")] = keyframeTypeName(static_cast<int>(kf.second));
+        m[QStringLiteral("value")] = kfModel->getInterpolatedValue(pos).toString();
+        result.append(m);
+    }
+    return result;
+}
+
+bool MainWindow::scriptAddEffectKeyframe(int clipId, int effectIndex, int frame, double normalizedValue, int keyframeType)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->isClip(clipId)) return false;
+
+    auto stack = timeline->model()->getClipEffectStackModel(clipId);
+    auto listModel = getEffectKeyframeModelAt(stack, effectIndex);
+    if (!listModel) return false;
+
+    if (keyframeType >= 0) {
+        double fps = pCore->getCurrentFps();
+        return listModel->addKeyframe(GenTime(frame, fps), static_cast<KeyframeType::KeyframeEnum>(keyframeType));
+    }
+    return listModel->addKeyframe(frame, normalizedValue);
+}
+
+bool MainWindow::scriptRemoveEffectKeyframe(int clipId, int effectIndex, int frame)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->isClip(clipId)) return false;
+
+    auto stack = timeline->model()->getClipEffectStackModel(clipId);
+    auto listModel = getEffectKeyframeModelAt(stack, effectIndex);
+    if (!listModel) return false;
+
+    double fps = pCore->getCurrentFps();
+    return listModel->removeKeyframe(GenTime(frame, fps));
+}
+
+bool MainWindow::scriptUpdateEffectKeyframe(int clipId, int effectIndex, int oldFrame, int newFrame, double normalizedValue)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->isClip(clipId)) return false;
+
+    auto stack = timeline->model()->getClipEffectStackModel(clipId);
+    auto listModel = getEffectKeyframeModelAt(stack, effectIndex);
+    if (!listModel) return false;
+
+    double fps = pCore->getCurrentFps();
+    QVariant val = (normalizedValue >= 0) ? QVariant(normalizedValue) : QVariant();
+    return listModel->updateKeyframe(GenTime(oldFrame, fps), GenTime(newFrame, fps), val);
+}
+
+// ── Speed ─────────────────────────────────────────────────────────────────
+
+bool MainWindow::scriptSetClipSpeed(int clipId, double speed, bool pitchCompensate)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->isClip(clipId)) return false;
+    // speed is percentage: 100=normal, 50=half, 200=double
+    return timeline->model()->requestClipTimeWarp(clipId, speed, pitchCompensate, true);
+}
+
+// ── Audio ─────────────────────────────────────────────────────────────────
+
+bool MainWindow::scriptSetClipVolume(int clipId, double dB)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->isClip(clipId)) return false;
+
+    auto stack = timeline->model()->getClipEffectStackModel(clipId);
+    if (!stack) return false;
+
+    // Find built-in volume effect (added by appendAudioBuildInEffects)
+    for (int i = 0; i < stack->rowCount(); ++i) {
+        auto effect = std::static_pointer_cast<EffectItemModel>(stack->getEffectStackRow(i));
+        if (effect && effect->getAssetId() == QLatin1String("volume") && effect->isBuiltIn()) {
+            effect->filter().set("level", dB);
+            effect->filter().set("disable", 0); // enable it
+            return true;
+        }
+    }
+    // No built-in volume found — add a regular volume effect
+    QMap<QString, QString> params;
+    params[QStringLiteral("level")] = QString::number(dB);
+    return stack->appendEffect(QStringLiteral("volume"), false, params);
+}
+
+double MainWindow::scriptGetClipVolume(int clipId)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return 0.0;
+    if (!timeline->model()->isClip(clipId)) return 0.0;
+
+    auto stack = timeline->model()->getClipEffectStackModel(clipId);
+    if (!stack) return 0.0;
+
+    for (int i = 0; i < stack->rowCount(); ++i) {
+        auto effect = std::static_pointer_cast<EffectItemModel>(stack->getEffectStackRow(i));
+        if (effect && effect->getAssetId() == QLatin1String("volume")) {
+            if (effect->filter().get_int("disable") == 1) return 0.0; // disabled = unity
+            return effect->filter().get_double("level");
+        }
+    }
+    return 0.0; // no volume effect = unity gain
+}
+
+bool MainWindow::scriptSetAudioFade(int clipId, int fadeInFrames, int fadeOutFrames)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->isClip(clipId)) return false;
+
+    auto stack = timeline->model()->getClipEffectStackModel(clipId);
+    if (!stack) return false;
+
+    bool ok = true;
+    if (fadeInFrames >= 0) {
+        ok = stack->adjustFadeLength(fadeInFrames, true, true, false, true) && ok;
+    }
+    if (fadeOutFrames >= 0) {
+        ok = stack->adjustFadeLength(fadeOutFrames, false, true, false, true) && ok;
+    }
+    return ok;
+}
+
+bool MainWindow::scriptSetTrackMute(int trackId, bool mute)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+
+    auto model = timeline->model();
+    int currentHide = model->getTrackProperty(trackId, QStringLiteral("hide")).toInt();
+    int newHide;
+    if (mute) {
+        newHide = currentHide | 2; // set audio-mute bit
+    } else {
+        newHide = currentHide & ~2; // clear audio-mute bit
+    }
+    model->setTrackProperty(trackId, QStringLiteral("hide"), QString::number(newHide));
+    return true;
+}
+
+bool MainWindow::scriptGetTrackMute(int trackId)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    return timeline->model()->getTrackProperty(trackId, QStringLiteral("hide")).toInt() & 2;
+}
+
+QVariantList MainWindow::scriptGetAudioLevels(const QString &binId, int stream, int downsample, int mode)
+{
+    QVariantList result;
+    auto clip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (!clip) return result;
+
+    QVector<int16_t> levels = clip->audioFrameCache(stream);
+    if (levels.isEmpty()) return result;
+
+    int16_t maxVal = clip->getAudioMax(stream);
+    if (maxVal <= 0) maxVal = 1;
+
+    int step = qMax(1, downsample);
+    double normMax = double(maxVal);
+
+    for (int i = 0; i < levels.size(); i += step) {
+        int end = qMin(i + step, levels.size());
+        if (mode == 1) {
+            // RMS mode
+            double sumSq = 0.0;
+            int count = 0;
+            for (int j = i; j < end; ++j) {
+                double v = double(levels[j]) / normMax;
+                sumSq += v * v;
+                ++count;
+            }
+            result.append(count > 0 ? std::sqrt(sumSq / count) : 0.0);
+        } else {
+            // Peak mode (default)
+            int16_t peak = 0;
+            for (int j = i; j < end; ++j) {
+                peak = qMax(peak, qAbs(levels[j]));
+            }
+            result.append(double(peak) / normMax);
+        }
+    }
+    return result;
+}
+
+// ── Markers & Guides ──────────────────────────────────────────────────────
+
+bool MainWindow::scriptAddGuide(int frame, const QString &comment, int category)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+
+    auto guideModel = timeline->model()->getGuideModel();
+    if (!guideModel) return false;
+
+    double fps = pCore->getCurrentFps();
+    GenTime pos(frame, fps);
+    return guideModel->addMarker(pos, comment, category);
+}
+
+QVariantList MainWindow::scriptGetGuides()
+{
+    QVariantList result;
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return result;
+
+    auto guideModel = timeline->model()->getGuideModel();
+    if (!guideModel) return result;
+
+    double fps = pCore->getCurrentFps();
+    // MarkerListModel stores markers sorted by GenTime
+    QList<CommentedTime> markers = guideModel->getAllMarkers();
+    for (const CommentedTime &marker : markers) {
+        QVariantMap m;
+        m[QStringLiteral("frame")] = marker.time().frames(fps);
+        m[QStringLiteral("comment")] = marker.comment();
+        m[QStringLiteral("category")] = marker.markerType();
+        result.append(m);
+    }
+    return result;
+}
+
+bool MainWindow::scriptDeleteGuide(int frame)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+
+    auto guideModel = timeline->model()->getGuideModel();
+    if (!guideModel) return false;
+
+    double fps = pCore->getCurrentFps();
+    GenTime pos(frame, fps);
+    return guideModel->removeMarker(pos);
+}
+
+bool MainWindow::scriptDeleteGuidesByCategory(int category)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+
+    auto guideModel = timeline->model()->getGuideModel();
+    if (!guideModel) return false;
+
+    double fps = pCore->getCurrentFps();
+    QList<CommentedTime> markers = guideModel->getAllMarkers();
+    bool anyDeleted = false;
+    for (const CommentedTime &marker : markers) {
+        if (marker.markerType() == category) {
+            if (guideModel->removeMarker(marker.time())) {
+                anyDeleted = true;
+            }
+        }
+    }
+    return anyDeleted;
+}
+
+// ── Clip-level Markers ───────────────────────────────────────────────────
+
+bool MainWindow::scriptAddClipMarker(const QString &binId, int frame, const QString &comment, int category)
+{
+    auto clip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (!clip) return false;
+    auto markerModel = clip->getMarkerModel();
+    if (!markerModel) return false;
+    double fps = pCore->getCurrentFps();
+    GenTime pos(frame, fps);
+    return markerModel->addMarker(pos, comment, category);
+}
+
+QVariantList MainWindow::scriptGetClipMarkers(const QString &binId)
+{
+    QVariantList result;
+    auto clip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (!clip) return result;
+    auto markerModel = clip->getMarkerModel();
+    if (!markerModel) return result;
+    double fps = pCore->getCurrentFps();
+    QList<CommentedTime> markers = markerModel->getAllMarkers();
+    for (const CommentedTime &marker : markers) {
+        QVariantMap m;
+        m[QStringLiteral("frame")] = marker.time().frames(fps);
+        m[QStringLiteral("comment")] = marker.comment();
+        m[QStringLiteral("category")] = marker.markerType();
+        result.append(m);
+    }
+    return result;
+}
+
+bool MainWindow::scriptDeleteClipMarker(const QString &binId, int frame)
+{
+    auto clip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (!clip) return false;
+    auto markerModel = clip->getMarkerModel();
+    if (!markerModel) return false;
+    double fps = pCore->getCurrentFps();
+    GenTime pos(frame, fps);
+    return markerModel->removeMarker(pos);
+}
+
+bool MainWindow::scriptDeleteClipMarkersByCategory(const QString &binId, int category)
+{
+    auto clip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (!clip) return false;
+    auto markerModel = clip->getMarkerModel();
+    if (!markerModel) return false;
+    QList<CommentedTime> markers = markerModel->getAllMarkers();
+    bool anyDeleted = false;
+    for (const CommentedTime &marker : markers) {
+        if (marker.markerType() == category) {
+            if (markerModel->removeMarker(marker.time())) {
+                anyDeleted = true;
+            }
+        }
+    }
+    return anyDeleted;
+}
+
+// ── Playback & Monitor ────────────────────────────────────────────────────
+
+void MainWindow::scriptSeek(int frame)
+{
+    if (m_projectMonitor) {
+        m_projectMonitor->slotSeek(frame);
+    }
+}
+
+int MainWindow::scriptGetPosition()
+{
+    if (m_projectMonitor) {
+        return m_projectMonitor->position();
+    }
+    return -1;
+}
+
+void MainWindow::scriptPlay()
+{
+    if (pCore->monitorManager()) {
+        pCore->monitorManager()->slotPlay();
+    }
+}
+
+void MainWindow::scriptPause()
+{
+    if (pCore->monitorManager()) {
+        pCore->monitorManager()->slotPause();
+    }
+}
+
+QVariantList MainWindow::scriptDetectScenes(const QString &binClipId, double threshold, int minDuration)
+{
+    QVariantList result;
+
+    // 1. Get clip from bin by ID
+    auto clip = pCore->projectItemModel()->getClipByBinID(binClipId);
+    if (!clip) {
+        qWarning() << "scriptDetectScenes: clip not found:" << binClipId;
+        return result;
+    }
+
+    // 2. Get source file path
+    QString sourceUrl = clip->url();
+    if (sourceUrl.isEmpty()) {
+        qWarning() << "scriptDetectScenes: clip has no source URL";
+        return result;
+    }
+
+    // 3. Build FFmpeg command (from SceneSplitTask logic)
+    QString ffmpegPath = KdenliveSettings::ffmpegpath();
+    QStringList args;
+    args << QStringLiteral("-y") << QStringLiteral("-loglevel") << QStringLiteral("info") << QStringLiteral("-i") << sourceUrl << QStringLiteral("-filter:v")
+         << QStringLiteral("select='gt(scene,%1)',showinfo").arg(threshold) << QStringLiteral("-vsync") << QStringLiteral("vfr") << QStringLiteral("-f")
+         << QStringLiteral("null") << QStringLiteral("-");
+
+    // 4. Run FFmpeg synchronously
+    QProcess process;
+    process.start(ffmpegPath, args);
+    process.waitForFinished(-1);
+
+    // 5. Parse output for scene-change timestamps
+    QString output = process.readAllStandardError();
+    QStringList lines = output.split(QLatin1Char('\n'));
+
+    double fps = pCore->getCurrentFps();
+    QList<double> timestamps;
+
+    for (const QString &line : lines) {
+        if (line.contains(QStringLiteral("[Parsed_showinfo"))) {
+            int pos = line.indexOf(QStringLiteral("pts_time:"));
+            if (pos > -1) {
+                QString timeStr = line.mid(pos + 9);
+                int endPos = timeStr.indexOf(QLatin1Char(' '));
+                if (endPos > -1) {
+                    timeStr = timeStr.left(endPos);
+                }
+                bool ok;
+                double time = timeStr.toDouble(&ok);
+                if (ok) {
+                    if (minDuration > 0 && !timestamps.isEmpty()) {
+                        double minSecs = minDuration / fps;
+                        if (time - timestamps.last() < minSecs) {
+                            continue;
+                        }
+                    }
+                    timestamps.append(time);
+                }
+            }
+        }
+    }
+
+    // 6. Convert to QVariantList for D-Bus serialization
+    for (double t : timestamps) {
+        result.append(t);
+    }
+
+    return result;
+}
+
+bool MainWindow::scriptFillFrame(int clipId)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->isClip(clipId)) return false;
+
+    // Get bin clip to read source resolution
+    const QString binId = timeline->model()->getClipBinId(clipId);
+    auto binClip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (!binClip) return false;
+
+    const QSize srcSize = binClip->frameSize();
+    const int srcW = srcSize.width();
+    const int srcH = srcSize.height();
+    if (srcW <= 0 || srcH <= 0) return false;
+
+    // Project resolution
+    const int projW = pCore->getCurrentProfile()->width();
+    const int projH = pCore->getCurrentProfile()->height();
+
+    // Already matches — no fill needed
+    if (srcW == projW && srcH == projH) return true;
+
+    // Scale-to-fill: uniform scale so the smaller dimension fills the frame
+    const double scale = qMax(double(projW) / srcW, double(projH) / srcH);
+    const int w = qRound(srcW * scale);
+    const int h = qRound(srcH * scale);
+    const int x = (projW - w) / 2;
+    const int y = (projH - h) / 2;
+
+    const QString rect = QStringLiteral("%1 %2 %3 %4 1").arg(x).arg(y).arg(w).arg(h);
+
+    // Apply qtblend effect with calculated rect
+    QMap<QString, QString> params;
+    params.insert(QStringLiteral("rect"), rect);
+    params.insert(QStringLiteral("distort"), QStringLiteral("1"));
+
+    auto stack = timeline->model()->getClipEffectStackModel(clipId);
+    if (!stack) return false;
+    return stack->appendEffect(QStringLiteral("qtblend"), false, params);
+}
+
+QString MainWindow::scriptRenderBinFrame(const QString &binId, int frame, int width, int height, const QString &outputPath)
+{
+    // 1. Get clip from bin
+    auto clip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (!clip) {
+        qWarning() << "scriptRenderBinFrame: clip not found:" << binId;
+        return QString();
+    }
+
+    QString sourceUrl = clip->url();
+    if (sourceUrl.isEmpty()) {
+        qWarning() << "scriptRenderBinFrame: clip has no source URL";
+        return QString();
+    }
+
+    // 2. Create producer and render frame
+    Mlt::Producer producer(pCore->getProjectProfile(), sourceUrl.toUtf8().constData());
+    if (!producer.is_valid()) {
+        qWarning() << "scriptRenderBinFrame: invalid producer for" << sourceUrl;
+        return QString();
+    }
+
+    QImage img = KThumb::getFrame(&producer, frame, width, height);
+    if (img.isNull()) {
+        qWarning() << "scriptRenderBinFrame: got null image";
+        return QString();
+    }
+
+    // 3. Scale to requested size (aspect-preserving) and save
+    if (img.width() != width || img.height() != height) {
+        img = img.scaled(width, height, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+
+    if (!img.save(outputPath, "JPEG", 90)) {
+        qWarning() << "scriptRenderBinFrame: failed to save" << outputPath;
+        return QString();
+    }
+
+    return outputPath;
+}
+
+QString MainWindow::scriptRenderTimelineFrame(int frame, int width, int height, const QString &outputPath)
+{
+    // 1. Get the timeline tractor (composited producer with all tracks, effects, transitions)
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) {
+        qWarning() << "scriptRenderTimelineFrame: no active timeline";
+        return QString();
+    }
+
+    Mlt::Tractor *tractor = timeline->model()->tractor();
+    if (!tractor || !tractor->is_valid()) {
+        qWarning() << "scriptRenderTimelineFrame: invalid tractor";
+        return QString();
+    }
+
+    // 2. Render the composited frame
+    QImage img = KThumb::getFrame(tractor, frame, width, height);
+    if (img.isNull()) {
+        qWarning() << "scriptRenderTimelineFrame: got null image";
+        return QString();
+    }
+
+    // 3. Scale and save
+    if (img.width() != width || img.height() != height) {
+        img = img.scaled(width, height, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+
+    if (!img.save(outputPath, "JPEG", 90)) {
+        qWarning() << "scriptRenderTimelineFrame: failed to save" << outputPath;
+        return QString();
+    }
+
+    return outputPath;
+}
+
+// ── Subtitles Scripting API ────────────────────────────────────────────────
+
+QVariantList MainWindow::scriptGetSubtitles()
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return {};
+    if (!timeline->model()->hasSubtitleModel()) return {};
+    auto subModel = timeline->model()->getSubtitleModel();
+    double fps = pCore->getCurrentFps();
+    auto allSubs = subModel->getAllSubtitles();
+    QVariantList result;
+    for (const auto &sub : allSubs) {
+        int layer = sub.first.first;
+        GenTime start = sub.first.second;
+        const SubtitleEvent &event = sub.second;
+        QVariantMap m;
+        m[QStringLiteral("id")] = subModel->getIdForStartPos(layer, start);
+        m[QStringLiteral("layer")] = layer;
+        m[QStringLiteral("startFrame")] = start.frames(fps);
+        m[QStringLiteral("endFrame")] = event.endTime().frames(fps);
+        m[QStringLiteral("text")] = event.text();
+        m[QStringLiteral("styleName")] = event.styleName();
+        result.append(m);
+    }
+    return result;
+}
+
+int MainWindow::scriptAddSubtitle(int startFrame, int endFrame, const QString &text, int layer)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return -1;
+    bool created = false;
+    if (!timeline->model()->hasSubtitleModel()) {
+        timeline->model()->createSubtitleModel();
+        created = true;
+    }
+    auto subModel = timeline->model()->getSubtitleModel();
+    if (created) {
+        // Ensure QML view is connected to the new subtitle model
+        pCore->subtitleWidget()->setModel(subModel);
+        timeline->connectSubtitleModel(true);
+        KdenliveSettings::setShowSubtitles(true);
+    }
+    double fps = pCore->getCurrentFps();
+    GenTime startPos(startFrame, fps);
+    GenTime endPos(endFrame, fps);
+    SubtitleEvent event(true, endPos, subModel->getLayerDefaultStyle(layer), QString(), 0, 0, 0, QString(), text);
+    Fun undo = []() { return true; };
+    Fun redo = []() { return true; };
+    if (subModel->addSubtitle({layer, startPos}, event, undo, redo)) {
+        pCore->pushUndo(undo, redo, i18n("Add subtitle"));
+        // Force QML DelegateModel to pick up the new row
+        Q_EMIT subModel->layoutChanged();
+        return subModel->getIdForStartPos(layer, startPos);
+    }
+    return -1;
+}
+
+bool MainWindow::scriptEditSubtitle(int subtitleId, const QString &newText)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model() || !timeline->model()->hasSubtitleModel()) return false;
+    return timeline->model()->getSubtitleModel()->editSubtitle(subtitleId, newText);
+}
+
+bool MainWindow::scriptDeleteSubtitle(int subtitleId)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model() || !timeline->model()->hasSubtitleModel()) return false;
+    return timeline->model()->getSubtitleModel()->removeSubtitle(subtitleId);
+}
+
+bool MainWindow::scriptExportSubtitles(const QString &filePath)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model() || !timeline->model()->hasSubtitleModel()) return false;
+    auto subModel = timeline->model()->getSubtitleModel();
+    int ix = pCore->currentDoc()->getSequenceProperty(timeline->model()->uuid(), QStringLiteral("kdenlive:activeSubtitleIndex"), QStringLiteral("0")).toInt();
+    subModel->copySubtitle(filePath, ix, false, false);
+    return QFile::exists(filePath);
+}
+
+// ── Subtitle Styles ──────────────────────────────────────────────────────
+
+static QVariantMap subtitleStyleToMap(const QString &name, const SubtitleStyle &s)
+{
+    QVariantMap m;
+    m[QStringLiteral("name")] = name;
+    m[QStringLiteral("fontName")] = s.fontName();
+    m[QStringLiteral("fontSize")] = s.fontSize();
+    m[QStringLiteral("primaryColour")] = s.primaryColour().name(QColor::HexArgb);
+    m[QStringLiteral("secondaryColour")] = s.secondaryColour().name(QColor::HexArgb);
+    m[QStringLiteral("outlineColour")] = s.outlineColour().name(QColor::HexArgb);
+    m[QStringLiteral("backColour")] = s.backColour().name(QColor::HexArgb);
+    m[QStringLiteral("bold")] = s.bold();
+    m[QStringLiteral("italic")] = s.italic();
+    m[QStringLiteral("underline")] = s.underline();
+    m[QStringLiteral("strikeOut")] = s.strikeOut();
+    m[QStringLiteral("scaleX")] = s.scaleX();
+    m[QStringLiteral("scaleY")] = s.scaleY();
+    m[QStringLiteral("spacing")] = s.spacing();
+    m[QStringLiteral("angle")] = s.angle();
+    m[QStringLiteral("borderStyle")] = s.borderStyle();
+    m[QStringLiteral("outline")] = s.outline();
+    m[QStringLiteral("shadow")] = s.shadow();
+    m[QStringLiteral("alignment")] = s.alignment();
+    m[QStringLiteral("marginL")] = s.marginL();
+    m[QStringLiteral("marginR")] = s.marginR();
+    m[QStringLiteral("marginV")] = s.marginV();
+    return m;
+}
+
+static void applyStyleOverrides(SubtitleStyle &style, const QStringList &keys, const QStringList &values)
+{
+    int count = qMin(keys.size(), values.size());
+    for (int i = 0; i < count; ++i) {
+        const QString &k = keys.at(i);
+        const QString &v = values.at(i);
+        if (k == QLatin1String("fontName"))
+            style.setFontName(v);
+        else if (k == QLatin1String("fontSize"))
+            style.setFontSize(v.toDouble());
+        else if (k == QLatin1String("primaryColour"))
+            style.setPrimaryColour(QColor(v));
+        else if (k == QLatin1String("secondaryColour"))
+            style.setSecondaryColour(QColor(v));
+        else if (k == QLatin1String("outlineColour"))
+            style.setOutlineColour(QColor(v));
+        else if (k == QLatin1String("backColour"))
+            style.setBackColour(QColor(v));
+        else if (k == QLatin1String("bold"))
+            style.setBold(v == QLatin1String("true") || v == QLatin1String("1"));
+        else if (k == QLatin1String("italic"))
+            style.setItalic(v == QLatin1String("true") || v == QLatin1String("1"));
+        else if (k == QLatin1String("underline"))
+            style.setUnderline(v == QLatin1String("true") || v == QLatin1String("1"));
+        else if (k == QLatin1String("strikeOut"))
+            style.setStrikeOut(v == QLatin1String("true") || v == QLatin1String("1"));
+        else if (k == QLatin1String("scaleX"))
+            style.setScaleX(v.toDouble());
+        else if (k == QLatin1String("scaleY"))
+            style.setScaleY(v.toDouble());
+        else if (k == QLatin1String("spacing"))
+            style.setSpacing(v.toDouble());
+        else if (k == QLatin1String("angle"))
+            style.setAngle(v.toDouble());
+        else if (k == QLatin1String("borderStyle"))
+            style.setBorderStyle(v.toInt());
+        else if (k == QLatin1String("outline"))
+            style.setOutline(v.toDouble());
+        else if (k == QLatin1String("shadow"))
+            style.setShadow(v.toDouble());
+        else if (k == QLatin1String("alignment"))
+            style.setAlignment(v.toInt());
+        else if (k == QLatin1String("marginL"))
+            style.setMarginL(v.toInt());
+        else if (k == QLatin1String("marginR"))
+            style.setMarginR(v.toInt());
+        else if (k == QLatin1String("marginV"))
+            style.setMarginV(v.toInt());
+    }
+}
+
+QVariantList MainWindow::scriptGetSubtitleStyles(bool global)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return {};
+    if (!timeline->model()->hasSubtitleModel()) return {};
+    auto subModel = timeline->model()->getSubtitleModel();
+    const auto &styles = subModel->getAllSubtitleStyles(global);
+    QVariantList result;
+    for (const auto &pair : styles) {
+        result.append(subtitleStyleToMap(pair.first, pair.second));
+    }
+    return result;
+}
+
+bool MainWindow::scriptSetSubtitleStyle(const QString &name, const QStringList &keys, const QStringList &values, bool global)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->hasSubtitleModel()) return false;
+    auto subModel = timeline->model()->getSubtitleModel();
+
+    // Start from existing style or defaults
+    const auto &styles = subModel->getAllSubtitleStyles(global);
+    SubtitleStyle style;
+    auto it = styles.find(name);
+    if (it != styles.end()) {
+        style = it->second;
+    }
+
+    applyStyleOverrides(style, keys, values);
+    subModel->setSubtitleStyle(name, style, global);
+    Q_EMIT subModel->layoutChanged();
+    return true;
+}
+
+bool MainWindow::scriptDeleteSubtitleStyle(const QString &name, bool global)
+{
+    if (name == QLatin1String("Default")) return false;
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->hasSubtitleModel()) return false;
+    auto subModel = timeline->model()->getSubtitleModel();
+    subModel->deleteSubtitleStyle(name, global);
+    Q_EMIT subModel->layoutChanged();
+    return true;
+}
+
+bool MainWindow::scriptSetSubtitleStyleName(int subtitleId, const QString &styleName)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->hasSubtitleModel()) return false;
+    auto subModel = timeline->model()->getSubtitleModel();
+    subModel->setStyleName(subtitleId, styleName);
+    Q_EMIT subModel->layoutChanged();
+    return true;
+}
+
+// ── Sequences ─────────────────────────────────────────────────────────────
+
+QVariantList MainWindow::scriptGetSequences()
+{
+    KdenliveDoc *project = pCore->currentDoc();
+    if (!project) return {};
+    QList<QUuid> uuids = project->getTimelinesUuids();
+    QUuid activeUuid;
+    if (getCurrentTimeline()) {
+        activeUuid = getCurrentTimeline()->getUuid();
+    }
+    QVariantList result;
+    for (const QUuid &uuid : uuids) {
+        auto model = project->getTimeline(uuid, true);
+        if (!model) continue;
+        QVariantMap m;
+        m[QStringLiteral("uuid")] = uuid.toString(QUuid::WithoutBraces);
+        m[QStringLiteral("name")] = model->tractor() ? QString(model->tractor()->get("kdenlive:clipname")) : QString();
+        m[QStringLiteral("duration")] = model->duration();
+        m[QStringLiteral("tracks")] = model->getTracksCount();
+        m[QStringLiteral("active")] = (uuid == activeUuid);
+        result.append(m);
+    }
+    return result;
+}
+
+QVariantMap MainWindow::scriptGetActiveSequence()
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return {};
+    KdenliveDoc *project = pCore->currentDoc();
+    if (!project) return {};
+    QUuid uuid = timeline->getUuid();
+    auto model = timeline->model();
+    QVariantMap m;
+    m[QStringLiteral("uuid")] = uuid.toString(QUuid::WithoutBraces);
+    m[QStringLiteral("name")] = model->tractor() ? QString(model->tractor()->get("kdenlive:clipname")) : QString();
+    m[QStringLiteral("duration")] = model->duration();
+    m[QStringLiteral("tracks")] = model->getTracksCount();
+    return m;
+}
+
+bool MainWindow::scriptSetActiveSequence(const QString &uuid)
+{
+    QUuid targetUuid = QUuid::fromString(uuid);
+    if (targetUuid.isNull()) return false;
+    // First try to raise an already-open tab
+    if (raiseTimeline(targetUuid)) {
+        return true;
+    }
+    // Tab not open — find the bin clip for this sequence and open it
+    KdenliveDoc *project = pCore->currentDoc();
+    if (!project) return false;
+    // Search all bin clips for one matching this UUID
+    auto binModel = pCore->projectItemModel();
+    std::vector<QString> allIds = binModel->getAllClipIds();
+    for (const QString &binId : allIds) {
+        auto clip = binModel->getClipByBinID(binId);
+        if (clip && clip->getSequenceUuid() == targetUuid) {
+            return pCore->projectManager()->openTimeline(binId, -1, targetUuid, -1);
+        }
+    }
+    return false;
+}
+
+// ── Zones ─────────────────────────────────────────────────────────────────
+
+QVariantMap MainWindow::scriptGetZone()
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->controller()) return {};
+    QVariantMap m;
+    m[QStringLiteral("zoneIn")] = timeline->controller()->zoneIn();
+    m[QStringLiteral("zoneOut")] = timeline->controller()->zoneOut();
+    return m;
+}
+
+bool MainWindow::scriptSetZone(int inFrame, int outFrame)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->controller()) return false;
+    timeline->controller()->setZone(QPoint(inFrame, outFrame), true);
+    return true;
+}
+
+bool MainWindow::scriptSetZoneIn(int inFrame)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->controller()) return false;
+    timeline->controller()->setZoneIn(inFrame);
+    return true;
+}
+
+bool MainWindow::scriptSetZoneOut(int outFrame)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->controller()) return false;
+    timeline->controller()->setZoneOut(outFrame);
+    return true;
+}
+
+bool MainWindow::scriptExtractZone(int inFrame, int outFrame, bool liftOnly)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->controller()) return false;
+    timeline->controller()->extractZone(QPoint(inFrame, outFrame), liftOnly);
+    return true;
+}
+
+// ── Groups ────────────────────────────────────────────────────────────────
+
+int MainWindow::scriptGroupClips(const QList<int> &itemIds)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return -1;
+
+    std::unordered_set<int> ids(itemIds.begin(), itemIds.end());
+    if (static_cast<int>(ids.size()) < 2) return -1;
+
+    return timeline->model()->requestClipsGroup(ids, true, GroupType::Normal);
+}
+
+bool MainWindow::scriptUngroupClips(int itemId)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->isInGroup(itemId)) return false;
+
+    return timeline->model()->requestClipUngroup(itemId, true);
+}
+
+QVariantMap MainWindow::scriptGetGroupInfo(int itemId)
+{
+    QVariantMap result;
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return result;
+
+    auto model = timeline->model();
+
+    bool inGroup = model->isInGroup(itemId);
+    result[QStringLiteral("isInGroup")] = inGroup;
+    result[QStringLiteral("isGroup")] = model->isGroup(itemId);
+
+    if (!inGroup) {
+        // Item is not grouped — return minimal info, avoid calling getType on a leaf
+        result[QStringLiteral("rootId")] = itemId;
+        result[QStringLiteral("groupType")] = QStringLiteral("Leaf");
+        result[QStringLiteral("members")] = QVariantList();
+        return result;
+    }
+
+    int rootId = model->getGroupRootId(itemId);
+    result[QStringLiteral("rootId")] = rootId;
+    result[QStringLiteral("groupType")] = groupTypeToStr(model->getGroupType(rootId));
+
+    // Collect leaf members (clips/compositions) of the root group
+    std::unordered_set<int> leaves = model->getGroupElements(itemId);
+    QVariantList memberList;
+    memberList.reserve(int(leaves.size()));
+    for (int leaf : leaves) {
+        QVariantMap member;
+        member[QStringLiteral("id")] = leaf;
+        if (model->isClip(leaf)) {
+            member[QStringLiteral("type")] = QStringLiteral("clip");
+            member[QStringLiteral("trackId")] = model->getClipTrackId(leaf);
+            member[QStringLiteral("position")] = model->getClipPosition(leaf);
+        } else if (model->isComposition(leaf)) {
+            member[QStringLiteral("type")] = QStringLiteral("composition");
+            member[QStringLiteral("trackId")] = model->getCompositionTrackId(leaf);
+            member[QStringLiteral("position")] = model->getCompositionPosition(leaf);
+        }
+        memberList.append(member);
+    }
+    result[QStringLiteral("members")] = memberList;
+
+    return result;
+}
+
+bool MainWindow::scriptRemoveFromGroup(int itemId)
+{
+    auto timeline = getCurrentTimeline();
+    if (!timeline || !timeline->model()) return false;
+    if (!timeline->model()->isInGroup(itemId)) return false;
+
+    return timeline->model()->requestRemoveFromGroup(itemId, true);
+}
+
+// ── Proxy Clips ───────────────────────────────────────────────────────────
+
+QVariantMap MainWindow::scriptGetClipProxyStatus(const QString &binId)
+{
+    QVariantMap result;
+    if (!pCore->currentDoc()) return result;
+
+    auto clip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (!clip) return result;
+
+    result[QStringLiteral("supportsProxy")] = clip->supportsProxy();
+    result[QStringLiteral("hasProxy")] = clip->hasProxy();
+    QString proxyPath = clip->getProducerProperty(QStringLiteral("kdenlive:proxy"));
+    result[QStringLiteral("proxyPath")] = proxyPath;
+    result[QStringLiteral("originalUrl")] = clip->getProducerProperty(QStringLiteral("kdenlive:originalurl"));
+    ObjectId oid(KdenliveObjectType::BinClip, binId.toInt(), QUuid());
+    result[QStringLiteral("isGenerating")] = pCore->taskManager.hasPendingJob(oid, AbstractTask::PROXYJOB);
+    return result;
+}
+
+bool MainWindow::scriptSetClipProxy(const QString &binId, bool enabled)
+{
+    if (!pCore->currentDoc()) return false;
+
+    auto clip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (!clip) return false;
+    if (!clip->supportsProxy()) return false;
+
+    QList<std::shared_ptr<ProjectClip>> clipList{clip};
+    pCore->currentDoc()->slotProxyCurrentItem(enabled, clipList);
+    return true;
+}
+
+bool MainWindow::scriptDeleteClipProxy(const QString &binId)
+{
+    if (!pCore->currentDoc()) return false;
+
+    auto clip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (!clip) return false;
+    if (!clip->supportsProxy()) return false;
+
+    clip->deleteProxy(true);
+    return true;
+}
+
+bool MainWindow::scriptRebuildClipProxy(const QString &binId)
+{
+    if (!pCore->currentDoc()) return false;
+
+    auto clip = pCore->projectItemModel()->getClipByBinID(binId);
+    if (!clip) return false;
+    if (!clip->supportsProxy()) return false;
+
+    QList<std::shared_ptr<ProjectClip>> clipList{clip};
+    pCore->currentDoc()->slotProxyCurrentItem(true, clipList, true);
+    return true;
+}
+
+// ── End Scripting API ──────────────────────────────────────────────────────
 
 #ifndef NODBUS
 void MainWindow::exitApp()
@@ -5828,4 +7632,69 @@ void MainWindow::slotEditToolbars()
     if (restorationHappened) {
         actionCollection()->writeSettings();
     }
+}
+
+// ---------------------------------------------------------------------------
+// Selection
+// ---------------------------------------------------------------------------
+
+QVariantList MainWindow::scriptGetSelection()
+{
+    QVariantList result;
+    if (!getCurrentTimeline() || !getCurrentTimeline()->controller()) return result;
+    const QList<int> sel = getCurrentTimeline()->controller()->selection();
+    for (int id : sel) {
+        result.append(id);
+    }
+    return result;
+}
+
+bool MainWindow::scriptSetSelection(const QList<int> &ids)
+{
+    if (!getCurrentTimeline() || !getCurrentTimeline()->controller()) return false;
+    getCurrentTimeline()->controller()->selectItems(ids);
+    return true;
+}
+
+bool MainWindow::scriptAddToSelection(int itemId, bool clear)
+{
+    if (!getCurrentTimeline() || !getCurrentTimeline()->controller()) return false;
+    auto model = getCurrentTimeline()->controller()->getModel();
+    if (!model) return false;
+    model->requestAddToSelection(itemId, clear);
+    return true;
+}
+
+bool MainWindow::scriptClearSelection()
+{
+    if (!getCurrentTimeline() || !getCurrentTimeline()->controller()) return false;
+    auto model = getCurrentTimeline()->controller()->getModel();
+    if (!model) return false;
+    return model->requestClearSelection();
+}
+
+bool MainWindow::scriptSelectAll()
+{
+    if (!getCurrentTimeline() || !getCurrentTimeline()->controller()) return false;
+    getCurrentTimeline()->controller()->selectAll();
+    return true;
+}
+
+bool MainWindow::scriptSelectCurrentTrack()
+{
+    if (!getCurrentTimeline() || !getCurrentTimeline()->controller()) return false;
+    getCurrentTimeline()->controller()->selectCurrentTrack();
+    return true;
+}
+
+bool MainWindow::scriptSelectItems(const QList<int> &trackIds, int startFrame, int endFrame)
+{
+    if (!getCurrentTimeline() || !getCurrentTimeline()->controller()) return false;
+    QVariantList tracks;
+    for (int tid : trackIds) {
+        tracks.append(tid);
+    }
+    // addToSelect=false, selectBottomCompositions=true, selectSubTitles=true
+    getCurrentTimeline()->controller()->selectItems(tracks, startFrame, endFrame, false, true, true);
+    return true;
 }

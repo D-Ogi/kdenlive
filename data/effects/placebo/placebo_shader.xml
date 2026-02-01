@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!DOCTYPE kpartgui>
+<effect xmlns="https://www.kdenlive.org" tag="placebo.shader" id="placebo.shader">
+    <name>GPU Shader (libplacebo)</name>
+    <description>Apply a custom mpv/libplacebo .hook shader for GPU processing</description>
+    <author>D-Ogi</author>
+    <parameter type="url" name="shader_path" default="">
+        <name>Shader File (.hook / .glsl)</name>
+    </parameter>
+</effect>

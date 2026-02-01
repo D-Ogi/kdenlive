@@ -8,6 +8,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "projectclip.h"
 #include "audio/audioInfo.h"
+
 #include "bin.h"
 #include "clipcreator.hpp"
 #include "core.h"
@@ -36,6 +37,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include "utils/thumbnailcache.hpp"
 #include "utils/timecode.h"
 #include "xml/xml.hpp"
+#include <cmath>
 
 #include "kdenlive_debug.h"
 #include <KIO/RenameDialog>
@@ -2770,6 +2772,49 @@ QVector<int16_t> ProjectClip::audioFrameCache(const int streamIdx) const
     }
     qWarning() << "Audio levels not found for bin" << m_binId;
     return {};
+}
+
+QVector<float> ProjectClip::getAudioLevelsPerFrame(int streamIdx, int totalVideoFrames, double fps, bool rmsMode) const
+{
+    QVector<float> result;
+    if (totalVideoFrames <= 0 || fps <= 0) return result;
+
+    QVector<int16_t> levels = audioFrameCache(streamIdx);
+    if (levels.isEmpty()) return result;
+
+    int16_t maxVal = getAudioMax(streamIdx);
+    if (maxVal <= 0) maxVal = 1;
+    double normMax = static_cast<double>(maxVal);
+
+    result.resize(totalVideoFrames);
+
+    // audioFrameCache has one sample per MLT frame. Map to video frames.
+    double mltFramesPerVideoFrame = static_cast<double>(levels.size()) / totalVideoFrames;
+
+    for (int vf = 0; vf < totalVideoFrames; vf++) {
+        int startSample = static_cast<int>(vf * mltFramesPerVideoFrame);
+        int endSample = static_cast<int>((vf + 1) * mltFramesPerVideoFrame);
+        startSample = qBound(0, startSample, levels.size() - 1);
+        endSample = qBound(startSample + 1, endSample, levels.size());
+
+        if (rmsMode) {
+            double sumSq = 0.0;
+            int count = 0;
+            for (int j = startSample; j < endSample; ++j) {
+                double v = static_cast<double>(levels[j]) / normMax;
+                sumSq += v * v;
+                ++count;
+            }
+            result[vf] = count > 0 ? static_cast<float>(std::sqrt(sumSq / count)) : 0.0f;
+        } else {
+            int16_t peak = 0;
+            for (int j = startSample; j < endSample; ++j) {
+                peak = qMax(peak, static_cast<int16_t>(qAbs(levels[j])));
+            }
+            result[vf] = static_cast<float>(static_cast<double>(peak) / normMax);
+        }
+    }
+    return result;
 }
 
 void ProjectClip::setClipStatus(FileStatus::ClipStatus status)

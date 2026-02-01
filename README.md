@@ -1,50 +1,68 @@
 ![](data/pics/kdenlive-logo.png)
 
-# Kdenlive
+# Kdenlive — D-Bus Scripting & Expressions Fork
 
-Kdenlive is a powerful, free and open-source video editor that brings professional-grade video editing capabilities to everyone. Whether you're creating a simple family video or working on a complex project, Kdenlive provides the tools you need to bring your vision to life.
+Fork of [KDE/kdenlive](https://github.com/KDE/kdenlive) that adds a **D-Bus scripting API** and a **JavaScript expression engine** for programmatic control of Kdenlive from Python, CLI, or any D-Bus client.
 
-For more information about Kdenlive's features, tutorials, and community, please visit our [official website](https://kdenlive.org).
+## What this fork adds
 
-There you can also find downloads for both stable releases and experimental daily builds for Kdenlive.
+### D-Bus Scripting API
 
-## Contributing to Kdenlive
+108 new `Q_SCRIPTABLE` methods exposed via D-Bus (`org.kde.kdenlive.MainWindow`), covering:
 
-Kdenlive is a community-driven project, and we welcome contributions from everyone! There are many ways to contribute beyond coding:
+| Category | Examples |
+|----------|---------|
+| **Project** | Open, save, new, properties, fps, resolution |
+| **Media pool** | Import, folders, clip properties, delete, relink |
+| **Timeline** | Insert, move, resize, cut, slip, delete clips; track management |
+| **Effects** | Add/remove effects, get/set/update keyframes |
+| **Compositions** | Add, move, resize, delete, list cross-track compositions |
+| **Audio** | Volume get/set, audio fades, audio level analysis |
+| **Subtitles** | Add, edit, delete, export; subtitle styles |
+| **Markers/guides** | Add, list, delete by frame or category (timeline and clip markers) |
+| **Groups** | Group/ungroup clips, query group membership |
+| **Selection** | Get/set selection, select all, select by track |
+| **Sequences** | List sequences, get/set active sequence |
+| **Zones** | Get/set zone in/out points, extract zone |
+| **Titles** | Create/read/update title clips (kdenlivetitle XML) |
+| **Proxy** | Set, rebuild, delete, query clip proxy status |
+| **Playback** | Seek, play, pause, get position |
+| **Rendering** | Render timeline/bin frames as thumbnails, scene detection |
+| **Undo** | Undo, redo, query undo stack status |
 
-- Help translate Kdenlive into your language
-- Report and triage bugs
-- Write documentation
-- Create tutorials
-- Help other users on forums and bug trackers
+### JavaScript Expression Engine
 
-Visit [kdenlive.org](https://kdenlive.org) to learn more about non-code contributions.
+An embedded QuickJS-based expression engine that allows keyframe parameters to be driven by JavaScript expressions (e.g. `sin(time * 2)`, audio-reactive effects). Includes:
 
-## Developer Information
+- Expression editor dialog with syntax highlighting
+- Built-in function library (math, time, audio, easing)
+- Expression template system with a repository of presets
+- Expression cache for performance
 
-### Technology Stack
+### libplacebo Effects
 
-Kdenlive is written in C++ and is using these technologies and frameworks:
+Two new GPU-accelerated effects via libplacebo: shader and render.
 
-- **Core Framework**: MLT for video editing functionality
-- **GUI Framework**: Qt and KDE Frameworks 6
-- **Additional Libraries**: frei0r (video effects), LADSPA (audio effects)
+## Python API
 
-### Getting Started
+Use with [kdenlive-api](https://github.com/D-Ogi/kdenlive-api) — a DaVinci Resolve-compatible Python wrapper:
 
-1. Check out our [build instructions](dev-docs/build.md) to set up your development environment
-2. Familiarize yourself with the [architecture](dev-docs/architecture.md) and [coding guidelines](dev-docs/coding.md)
-4. If the MLT library is new to you check out [MLT Introduction](dev-docs/mlt-intro.md)
-3. Join our Matrix channel `#kdenlive-dev:kde.org` for developer discussions and support
+```python
+from kdenlive_api import Resolve
 
-### Contributing Code
+resolve = Resolve()
+project = resolve.GetProjectManager().GetCurrentProject()
+timeline = project.GetCurrentTimeline()
+```
 
-Kdenlive's primary development happens on [KDE Invent](https://invent.kde.org/multimedia/kdenlive). While we maintain a GitHub mirror, all code contributions should be submitted through KDE's GitLab instance. For more information about KDE's development infrastructure, visit the [KDE GitLab documentation](https://community.kde.org/Infrastructure/GitLab).
+## Building
 
-### Finding Things to Work On
+Follow the standard Kdenlive [build instructions](dev-docs/build.md). This fork tracks upstream `master`. Additional build requirements:
 
-- Browse open issues on [KDE Invent](https://invent.kde.org/multimedia/kdenlive/-/issues)
-- Check the [KDE Bug Tracker](https://bugs.kde.org) for reported issues
-- Look for issues tagged with "good first issue" or "help wanted"
+- **D-Bus**: `-DUSE_DBUS=ON` (enabled by default on Linux, must be explicit on Windows via Craft)
+- **QuickJS**: Bundled in `src/expressions/quickjs/` (no external dependency)
 
-Need help getting started? Join our Matrix channel `#kdenlive-dev:kde.org` - our community is friendly and always ready to help new contributors!
+## Upstream
+
+For general Kdenlive information, features, and downloads visit [kdenlive.org](https://kdenlive.org).
+Upstream source: [KDE Invent](https://invent.kde.org/multimedia/kdenlive) / [GitHub mirror](https://github.com/KDE/kdenlive).

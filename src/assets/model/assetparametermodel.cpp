@@ -5,14 +5,20 @@
 
 #include "assetparametermodel.hpp"
 #include "assets/keyframes/model/keyframemodellist.hpp"
+#include "bin/model/markerlistmodel.hpp"
+#include "bin/projectclip.h"
 #include "bin/projectitemmodel.h"
 #include "core.h"
 #include "doc/kdenlivedoc.h"
 #include "effects/effectsrepository.hpp"
+#include "effects/effectstack/model/effectstackmodel.hpp"
+#include "expressions/expressioncache.h"
+#include "expressions/expressionengine.h"
 #include "kdenlivesettings.h"
 #include "klocalizedstring.h"
 #include "monitor/monitor.h"
 #include "profiles/profilemodel.hpp"
+#include "project/projectmanager.h"
 #include "timeline2/model/timelineitemmodel.hpp"
 #include <QDebug>
 #include <QDir>
@@ -21,6 +27,9 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QString>
+#include <algorithm>
+#include <cmath>
+#include <mlt++/Mlt.h>
 #define DEBUG_LOCALE false
 
 AssetParameterModel::AssetParameterModel(std::unique_ptr<Mlt::Properties> asset, const QDomElement &assetXml, const QString &assetId, ObjectId ownerId,
@@ -859,6 +868,14 @@ QVariant AssetParameterModel::data(const QModelIndex &index, int role) const
         return m_asset->get_double("14");
     case Enum15Role:
         return m_asset->get_double("15");
+    case ExpressionRole:
+        return m_params.at(paramName).expression;
+    case ExpressionActiveRole:
+        return !m_params.at(paramName).expression.isEmpty();
+    case ExpressionTemplateLinkRole:
+        return m_params.at(paramName).expressionTemplateId;
+    case ExpressionBaseValueRole:
+        return m_params.at(paramName).expressionBaseValue;
     }
     return QVariant();
 }
@@ -957,7 +974,7 @@ ParamType AssetParameterModel::paramTypeFromStr(const QString &type)
 bool AssetParameterModel::isAnimated(ParamType type)
 {
     static QList<ParamType> animatedTypes = {ParamType::KeyframeParam,    ParamType::AnimatedFakePoint, ParamType::AnimatedPoint, ParamType::AnimatedRect,
-                                             ParamType::AnimatedFakeRect, ParamType::ColorWheel,        ParamType::Color};
+                                             ParamType::AnimatedFakeRect, ParamType::ColorWheel,        ParamType::Color,         ParamType::Roto_spline};
     return animatedTypes.contains(type);
 }
 
@@ -1911,4 +1928,822 @@ bool AssetParameterModel::isDefault() const
     }
     qDebug() << "YYYYYYYYYYYYY DISABLING EFFECT:\n";
     return true;
+}
+
+// ── Expression support ──────────────────────────────────────────────
+
+void AssetParameterModel::setExpression(const QString &paramName, const QString &expression)
+{
+    auto it = m_params.find(paramName);
+    if (it == m_params.end()) return;
+    it->second.expression = expression;
+
+    // Persist to MLT filter so project save preserves expression
+    QString exprProp = QStringLiteral("kdenlive:expr.%1").arg(paramName);
+    if (expression.isEmpty()) {
+        m_asset->clear(exprProp.toUtf8().constData());
+    } else {
+        m_asset->set(exprProp.toUtf8().constData(), expression.toUtf8().constData());
+    }
+
+    Q_EMIT expressionChanged(paramName, expression);
+    // Notify views that expression state changed
+    QModelIndex idx = index(m_rows.indexOf(paramName), 0);
+    if (idx.isValid()) {
+        Q_EMIT dataChanged(idx, idx, {ExpressionRole, ExpressionActiveRole});
+    }
+
+    // Bake expression to dense keyframes and apply to MLT
+    if (!expression.isEmpty()) {
+        // Snapshot the current value as base when first setting an expression.
+        // This prevents circular dependency where `value` reflects the baked result.
+        if (!it->second.expressionBaseValue.isValid()) {
+            if (it->second.type == ParamType::Roto_spline) {
+                // For roto-spline, snapshot the current spline JSON
+                it->second.expressionBaseValue = QString::fromUtf8(m_asset->get("spline"));
+            } else if (it->second.type == ParamType::KeyframeParam) {
+                // For animated/keyframe params, m_params[name].value may only hold
+                // the XML default (e.g. 0) because slider updates go through KeyframeModel.
+                // Read the actual current value from the MLT animation property.
+                int snapIn = m_asset->get_int("in");
+                if (snapIn <= 0) snapIn = pCore->getItemIn(m_ownerId);
+                double animVal = m_asset->anim_get_double(paramName.toUtf8().constData(), snapIn, -1);
+                it->second.expressionBaseValue = animVal;
+            } else {
+                it->second.expressionBaseValue = it->second.value;
+            }
+        }
+
+        int in = m_asset->get_int("in");
+        int out = m_asset->get_int("out");
+        if (out <= 0) {
+            in = pCore->getItemIn(m_ownerId);
+            out = in + pCore->getItemDuration(m_ownerId) - 1;
+        }
+        double fps = pCore->getCurrentFps();
+        double clipDuration = static_cast<double>(out - in + 1) / fps;
+        double baseValue = it->second.expressionBaseValue.toDouble();
+
+        // Load audio data if the expression uses audioLevel/audioRms
+        QVector<float> audioPeakBoth, audioPeakLeft, audioPeakRight;
+        if (ExpressionEngine::usesAudio(expression)) {
+            ExpressionCache::loadTimelineAudioForRange(in, out, fps, audioPeakBoth, audioPeakLeft, audioPeakRight);
+        }
+
+        // Gather clip metadata for thisClip/thisTrack references
+        int clipPosition = 0;
+        int clipDurationFrames = out - in + 1;
+        QString clipName;
+        int trackIndex = 0;
+        auto timeline = pCore->projectManager()->getTimeline();
+        if (m_ownerId.type == KdenliveObjectType::TimelineClip) {
+            clipPosition = pCore->getItemPosition(m_ownerId);
+            int trackId = pCore->getItemTrack(m_ownerId);
+            if (timeline) {
+                clipName = timeline->getClipName(m_ownerId.itemId);
+                trackIndex = timeline->getTrackPosition(trackId);
+            }
+        }
+
+        // Set up cross-clip parameter resolver
+        if (timeline) {
+            ExpressionCache::instance().setClipResolver([timeline](const QString &refClipName, const QString &effectId, const QString &paramName) -> double {
+                // Search all video and audio tracks for a clip matching the name
+                QList<int> videoTracks = timeline->getTracksIds(false);
+                QList<int> audioTracks = timeline->getTracksIds(true);
+                QList<int> allTracks = videoTracks + audioTracks;
+
+                for (int trackId : allTracks) {
+                    std::unordered_set<int> clipIds = timeline->getItemsInRange(trackId, 0, -1, false);
+                    for (int cid : clipIds) {
+                        if (!timeline->isClip(cid)) continue;
+                        if (timeline->getClipName(cid) != refClipName) continue;
+
+                        // Found the clip — look up its effect stack
+                        auto effectStack = timeline->getClipEffectStackModel(cid);
+                        if (!effectStack) continue;
+
+                        auto effectModel = effectStack->getAssetModelById(effectId);
+                        if (!effectModel) continue;
+
+                        // Read the parameter value
+                        QString expr = effectModel->getExpression(paramName);
+                        if (!expr.isEmpty()) {
+                            // If the target param has an expression, return its base value
+                            return effectModel->getExpressionBaseValue(paramName);
+                        }
+                        // Otherwise return the current parameter value
+                        QModelIndex paramIdx = effectModel->getParamIndexFromName(paramName);
+                        if (paramIdx.isValid()) {
+                            return effectModel->data(paramIdx, AssetParameterModel::ValueRole).toDouble();
+                        }
+                    }
+                }
+                return 0.0;
+            });
+
+            // Shared helper: get all clips on the same track sorted by position.
+            // Both resolvers (clip-by-index and clip-metadata) need this lookup.
+            int currentTrackId = pCore->getItemTrack(m_ownerId);
+            auto getTrackClipsSorted = [timeline, currentTrackId]() -> QVector<QPair<int, int>> {
+                std::unordered_set<int> clipIds = timeline->getItemsInRange(currentTrackId, 0, -1, false);
+                QVector<QPair<int, int>> positionAndId; // (position, clipId)
+                positionAndId.reserve(static_cast<int>(clipIds.size()));
+                for (int cid : clipIds) {
+                    if (!timeline->isClip(cid)) continue;
+                    positionAndId.append({timeline->getClipPosition(cid), cid});
+                }
+                std::sort(positionAndId.begin(), positionAndId.end(), [](const QPair<int, int> &a, const QPair<int, int> &b) { return a.first < b.first; });
+                return positionAndId;
+            };
+
+            // Set up clip-by-index resolver: clip(N).effect(name).param(name)
+            // N = 0-based position index on the same track as the expression's clip
+            ExpressionCache::instance().setClipByIndexResolver(
+                [timeline, getTrackClipsSorted](int clipIndex, const QString &effectId, const QString &paramName) -> double {
+                    auto clips = getTrackClipsSorted();
+                    if (clipIndex < 0 || clipIndex >= clips.size()) return 0.0;
+
+                    int targetClipId = clips[clipIndex].second;
+                    auto effectStack = timeline->getClipEffectStackModel(targetClipId);
+                    if (!effectStack) return 0.0;
+
+                    auto effectModel = effectStack->getAssetModelById(effectId);
+                    if (!effectModel) return 0.0;
+
+                    QString expr = effectModel->getExpression(paramName);
+                    if (!expr.isEmpty()) {
+                        return effectModel->getExpressionBaseValue(paramName);
+                    }
+                    QModelIndex paramIdx = effectModel->getParamIndexFromName(paramName);
+                    if (paramIdx.isValid()) {
+                        return effectModel->data(paramIdx, AssetParameterModel::ValueRole).toDouble();
+                    }
+                    return 0.0;
+                });
+
+            // Set up clip metadata resolver: provides .name, .duration, .width, etc.
+            // for clip ref objects created by clip(index) — AE Layer property access
+            ExpressionCache::instance().setClipMetadataResolver([timeline, getTrackClipsSorted, fps](int clipIndex) -> ExpressionEngine::ClipMetadata {
+                ExpressionEngine::ClipMetadata meta;
+                auto clips = getTrackClipsSorted();
+                if (clipIndex < 0 || clipIndex >= clips.size()) return meta;
+
+                int targetClipId = clips[clipIndex].second;
+                int clipPos = clips[clipIndex].first;
+                int clipPlaytime = timeline->getClipPlaytime(targetClipId);
+                QString binId = timeline->getClipBinId(targetClipId);
+                double currentFps = fps > 0.0 ? fps : 25.0;
+
+                meta.index = clipIndex;
+                meta.inPoint = 0.0;
+                meta.outPoint = static_cast<double>(clipPlaytime) / currentFps;
+                meta.startTime = static_cast<double>(clipPos) / currentFps;
+                meta.duration = meta.outPoint;
+
+                // Resolve bin clip for source metadata
+                if (!binId.isEmpty()) {
+                    auto binClip = pCore->projectItemModel()->getClipByBinID(binId);
+                    if (binClip) {
+                        meta.name = binClip->clipName();
+                        meta.width = binClip->getProducerIntProperty(QStringLiteral("meta.media.width"));
+                        meta.height = binClip->getProducerIntProperty(QStringLiteral("meta.media.height"));
+                        meta.hasVideo = binClip->hasVideo();
+                        meta.hasAudio = binClip->hasAudio();
+                    }
+                }
+                meta.valid = true;
+                return meta;
+            });
+
+            // Set project context (AE thisComp equivalent)
+            {
+                const auto &profile = pCore->getCurrentProfile();
+                int projWidth = profile->width();
+                int projHeight = profile->height();
+                double pixelAspect = profile->sar();
+                QString projName = pCore->currentDoc()->url().fileName();
+                QString projFullPath = pCore->currentDoc()->url().toLocalFile();
+                int numVideoTracks = timeline->getTracksIds(false).size();
+                int numAudioTracks = timeline->getTracksIds(true).size();
+                int numTracks = numVideoTracks + numAudioTracks;
+                double timelineDuration = static_cast<double>(timeline->duration()) / fps;
+                ExpressionCache::instance().setProjectContext(projWidth, projHeight, fps, timelineDuration, pixelAspect, projName, projFullPath, numTracks,
+                                                              0.0);
+            }
+        }
+
+        // Set up thisEffect.param() resolver — reads other params from this same effect
+        {
+            // Capture m_params by reference (safe: we're synchronous within setExpression)
+            auto &params = m_params;
+            auto *asset = m_asset.get();
+            ExpressionCache::instance().setEffectResolver([&params, &paramName, asset](const QString &refParamName) -> double {
+                // Prevent self-reference
+                if (refParamName == paramName) return 0.0;
+                auto refIt = params.find(refParamName);
+                if (refIt == params.end()) return 0.0;
+                // If the referenced param has an expression, return its base value
+                if (!refIt->second.expression.isEmpty() && refIt->second.expressionBaseValue.isValid()) {
+                    return refIt->second.expressionBaseValue.toDouble();
+                }
+                // For animated/keyframe params, read the actual MLT value
+                if (refIt->second.type == ParamType::KeyframeParam && asset) {
+                    int refIn = asset->get_int("in");
+                    return asset->anim_get_double(refParamName.toUtf8().constData(), refIn, -1);
+                }
+                return refIt->second.value.toDouble();
+            });
+        }
+
+        // Set up image sampler if expression uses sampleImage()
+        if (ExpressionEngine::usesImage(expression) && timeline && m_ownerId.type == KdenliveObjectType::TimelineClip) {
+            QString binId = timeline->getClipBinId(m_ownerId.itemId);
+            if (!binId.isEmpty()) {
+                auto binClip = pCore->projectItemModel()->getClipByBinID(binId);
+                if (binClip) {
+                    QString sourcePath = binClip->clipUrl();
+                    if (!sourcePath.isEmpty()) {
+                        // Create a producer at project resolution for pixel-accurate sampling
+                        auto profile = std::make_shared<Mlt::Profile>(pCore->getCurrentProfilePath().toUtf8().constData());
+                        auto prod = std::make_shared<Mlt::Producer>(*profile, sourcePath.toUtf8().constData());
+
+                        if (prod->is_valid()) {
+                            // Attach color conversion filters for correct RGBA output
+                            Mlt::Filter scaler(*profile, "swscale");
+                            Mlt::Filter converter(*profile, "avcolor_space");
+                            prod->attach(scaler);
+                            prod->attach(converter);
+
+                            int projWidth = profile->width();
+                            int projHeight = profile->height();
+                            int clipIn = in;
+
+                            // Per-frame image cache to avoid re-decoding within same frame.
+                            // NOT thread-safe — only safe because baking is single-threaded
+                            // under ExpressionCache mutex.
+                            struct ImageCache
+                            {
+                                int sourceFrame = -1;
+                                std::unique_ptr<Mlt::Frame> mltFrame;
+                                const uchar *pixels = nullptr;
+                                int width = 0;
+                                int height = 0;
+                            };
+                            auto imgCache = std::make_shared<ImageCache>();
+
+                            ExpressionCache::instance().setImageSampler(
+                                [prod, profile, clipIn, imgCache](int frame, double x, double y, double radius) -> std::array<double, 4> {
+                                    int sourceFrame = frame + clipIn;
+
+                                    // Load frame if not cached
+                                    if (imgCache->sourceFrame != sourceFrame) {
+                                        prod->seek(sourceFrame);
+                                        imgCache->mltFrame.reset(prod->get_frame());
+                                        if (imgCache->mltFrame && imgCache->mltFrame->is_valid()) {
+                                            mlt_image_format fmt = mlt_image_rgba;
+                                            int w = 0, h = 0;
+                                            imgCache->pixels = imgCache->mltFrame->get_image(fmt, w, h);
+                                            imgCache->width = w;
+                                            imgCache->height = h;
+                                            imgCache->sourceFrame = sourceFrame;
+                                        } else {
+                                            imgCache->pixels = nullptr;
+                                            imgCache->sourceFrame = -1;
+                                        }
+                                    }
+
+                                    if (!imgCache->pixels || imgCache->width <= 0 || imgCache->height <= 0) {
+                                        return {0.0, 0.0, 0.0, 0.0};
+                                    }
+
+                                    int w = imgCache->width;
+                                    int h = imgCache->height;
+                                    const uchar *data = imgCache->pixels;
+
+                                    // MLT mlt_image_rgba: bytes are R, G, B, A in memory order
+                                    auto samplePixel = [data, w, h](int px, int py) -> std::array<double, 4> {
+                                        px = std::clamp(px, 0, w - 1);
+                                        py = std::clamp(py, 0, h - 1);
+                                        int offset = (py * w + px) * 4;
+                                        return {data[offset] / 255.0, data[offset + 1] / 255.0, data[offset + 2] / 255.0, data[offset + 3] / 255.0};
+                                    };
+
+                                    if (radius <= 0.5) {
+                                        // Single pixel sample
+                                        return samplePixel(static_cast<int>(x), static_cast<int>(y));
+                                    }
+
+                                    // Average pixels within circular radius
+                                    int r = static_cast<int>(std::ceil(radius));
+                                    int cx = static_cast<int>(x);
+                                    int cy = static_cast<int>(y);
+                                    double sumR = 0, sumG = 0, sumB = 0, sumA = 0;
+                                    int count = 0;
+                                    double r2 = radius * radius;
+                                    for (int dy = -r; dy <= r; dy++) {
+                                        for (int dx = -r; dx <= r; dx++) {
+                                            if (dx * dx + dy * dy > r2) continue;
+                                            auto [pr, pg, pb, pa] = samplePixel(cx + dx, cy + dy);
+                                            sumR += pr;
+                                            sumG += pg;
+                                            sumB += pb;
+                                            sumA += pa;
+                                            count++;
+                                        }
+                                    }
+                                    if (count == 0) return {0.0, 0.0, 0.0, 0.0};
+                                    return {sumR / count, sumG / count, sumB / count, sumA / count};
+                                });
+
+                            // Set image dimensions as thisClip.width/height
+                            ExpressionCache::instance().setImageContext(projWidth, projHeight);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Load keyframes if expression uses loopIn/loopOut
+        QVector<QPair<int, double>> exprKeyframes;
+        if (ExpressionEngine::usesKeyframes(expression) && m_keyframes) {
+            QModelIndex paramIdx = index(m_rows.indexOf(paramName), 0);
+            auto *kfModel = m_keyframes->getKeyModel(QPersistentModelIndex(paramIdx));
+            if (kfModel) {
+                for (auto kfIt = kfModel->begin(); kfIt != kfModel->end(); ++kfIt) {
+                    int kfFrame = kfIt->first.frames(fps);
+                    double val = kfIt->second.second.toDouble();
+                    exprKeyframes.append({kfFrame, val});
+                }
+            }
+        }
+
+        // Load timeline markers/guides if expression uses marker references
+        QVector<ExprMarkerData> exprMarkers;
+        if (ExpressionEngine::usesMarkers(expression) && timeline) {
+            auto guideModel = timeline->getGuideModel();
+            if (guideModel) {
+                QList<CommentedTime> allMarkers = guideModel->getAllMarkers();
+                for (const auto &m : allMarkers) {
+                    // Convert timeline-absolute frame to clip-relative seconds
+                    int markerFrame = m.time().frames(fps);
+                    double markerTime = static_cast<double>(markerFrame - in) / fps;
+                    double markerDuration = m.duration().seconds();
+                    exprMarkers.append({markerTime, m.comment(), markerDuration});
+                }
+            }
+        }
+
+        // Path expression branch: Roto_spline params with createPath()
+        if (it->second.type == ParamType::Roto_spline && ExpressionEngine::usesPath(expression)) {
+            QString bakedJson = ExpressionCache::instance().bakePath(expression, in, out, fps, clipDuration, clipPosition, clipDurationFrames, clipName,
+                                                                     trackIndex, audioPeakBoth, audioPeakLeft, audioPeakRight, exprMarkers);
+
+            ExpressionCache::instance().clearClipResolver();
+            ExpressionCache::instance().clearClipByIndexResolver();
+            ExpressionCache::instance().clearClipMetadataResolver();
+            ExpressionCache::instance().clearEffectResolver();
+            ExpressionCache::instance().clearProjectContext();
+
+            if (!bakedJson.isEmpty()) {
+                m_asset->set("spline", bakedJson.toUtf8().constData());
+                Q_EMIT modelChanged();
+                if (!m_isAudio) {
+                    pCore->refreshProjectItem(m_ownerId);
+                    pCore->invalidateItem(m_ownerId);
+                }
+            }
+            return;
+        }
+
+        QString bakedAnim = ExpressionCache::instance().bake(expression, in, out, fps, clipDuration, baseValue, 0, audioPeakBoth, audioPeakLeft, audioPeakRight,
+                                                             clipPosition, clipDurationFrames, clipName, trackIndex, exprKeyframes, exprMarkers);
+
+        // Clear resolvers after baking
+        ExpressionCache::instance().clearClipResolver();
+        ExpressionCache::instance().clearClipByIndexResolver();
+        ExpressionCache::instance().clearClipMetadataResolver();
+        ExpressionCache::instance().clearEffectResolver();
+        ExpressionCache::instance().clearImageSampler();
+        ExpressionCache::instance().clearImageContext();
+        ExpressionCache::instance().clearProjectContext();
+
+        if (!bakedAnim.isEmpty()) {
+            m_asset->set(paramName.toUtf8().constData(), bakedAnim.toUtf8().constData());
+            Q_EMIT modelChanged();
+            if (!m_isAudio) {
+                pCore->refreshProjectItem(m_ownerId);
+                pCore->invalidateItem(m_ownerId);
+            }
+        }
+    }
+}
+
+QString AssetParameterModel::getExpression(const QString &paramName) const
+{
+    auto it = m_params.find(paramName);
+    if (it == m_params.end()) return {};
+    return it->second.expression;
+}
+
+void AssetParameterModel::clearExpression(const QString &paramName)
+{
+    auto it = m_params.find(paramName);
+    if (it != m_params.end() && it->second.expressionBaseValue.isValid()) {
+        // Restore the original value to MLT before clearing expression
+        QString restoreValue = it->second.expressionBaseValue.toString();
+        it->second.value = it->second.expressionBaseValue;
+        it->second.expressionBaseValue = QVariant(); // clear snapshot
+        it->second.expression.clear();
+        // Clear persisted MLT properties
+        m_asset->clear(QStringLiteral("kdenlive:expr.%1").arg(paramName).toUtf8().constData());
+        m_asset->clear(QStringLiteral("kdenlive:exprbase.%1").arg(paramName).toUtf8().constData());
+        m_asset->clear(QStringLiteral("kdenlive:exprtmpl.%1").arg(paramName).toUtf8().constData());
+        Q_EMIT expressionChanged(paramName, QString());
+        QModelIndex idx = index(m_rows.indexOf(paramName), 0);
+        if (idx.isValid()) {
+            Q_EMIT dataChanged(idx, idx, {ExpressionRole, ExpressionActiveRole, ExpressionBaseValueRole});
+        }
+
+        if (it->second.type == ParamType::Roto_spline) {
+            // For roto-spline, restore the base spline JSON to the "spline" property
+            m_asset->set("spline", restoreValue.toUtf8().constData());
+        } else {
+            m_asset->set(paramName.toUtf8().constData(), restoreValue.toUtf8().constData());
+        }
+
+        Q_EMIT modelChanged();
+        if (!m_isAudio) {
+            pCore->refreshProjectItem(m_ownerId);
+            pCore->invalidateItem(m_ownerId);
+        }
+    } else {
+        setExpression(paramName, QString());
+    }
+}
+
+bool AssetParameterModel::hasExpression(const QString &paramName) const
+{
+    auto it = m_params.find(paramName);
+    if (it == m_params.end()) return false;
+    return !it->second.expression.isEmpty();
+}
+
+// ── Expression base value ────────────────────────────────────────────
+
+void AssetParameterModel::setExpressionBaseValue(const QString &paramName, double baseValue)
+{
+    auto it = m_params.find(paramName);
+    if (it == m_params.end()) return;
+    it->second.expressionBaseValue = baseValue;
+    // Persist to MLT filter
+    QString baseProp = QStringLiteral("kdenlive:exprbase.%1").arg(paramName);
+    m_asset->set(baseProp.toUtf8().constData(), QString::number(baseValue, 'g', 15).toUtf8().constData());
+    QModelIndex idx = index(m_rows.indexOf(paramName), 0);
+    if (idx.isValid()) {
+        Q_EMIT dataChanged(idx, idx, {ExpressionBaseValueRole});
+    }
+    // Re-bake the expression with the new base value
+    if (!it->second.expression.isEmpty()) {
+        setExpression(paramName, it->second.expression);
+    }
+}
+
+double AssetParameterModel::getExpressionBaseValue(const QString &paramName) const
+{
+    auto it = m_params.find(paramName);
+    if (it == m_params.end()) return 0.0;
+    if (it->second.expressionBaseValue.isValid()) {
+        return it->second.expressionBaseValue.toDouble();
+    }
+    // For animated/keyframe params, m_params[name].value may only hold the XML default.
+    // Read the actual current value from the MLT animation property.
+    if (it->second.type == ParamType::KeyframeParam) {
+        int in = m_asset->get_int("in");
+        if (in <= 0) in = pCore->getItemIn(m_ownerId);
+        return m_asset->anim_get_double(paramName.toUtf8().constData(), in, -1);
+    }
+    return it->second.value.toDouble();
+}
+
+// ── Expression template linking ─────────────────────────────────────
+
+void AssetParameterModel::setExpressionTemplateLink(const QString &paramName, const QString &templateId)
+{
+    auto it = m_params.find(paramName);
+    if (it == m_params.end()) return;
+    it->second.expressionTemplateId = templateId;
+    // Persist to MLT filter
+    QString tmplProp = QStringLiteral("kdenlive:exprtmpl.%1").arg(paramName);
+    if (templateId.isEmpty()) {
+        m_asset->clear(tmplProp.toUtf8().constData());
+    } else {
+        m_asset->set(tmplProp.toUtf8().constData(), templateId.toUtf8().constData());
+    }
+    Q_EMIT expressionTemplateLinkChanged(paramName, templateId);
+    QModelIndex idx = index(m_rows.indexOf(paramName), 0);
+    if (idx.isValid()) {
+        Q_EMIT dataChanged(idx, idx, {ExpressionTemplateLinkRole});
+    }
+}
+
+QString AssetParameterModel::getExpressionTemplateLink(const QString &paramName) const
+{
+    auto it = m_params.find(paramName);
+    if (it == m_params.end()) return {};
+    return it->second.expressionTemplateId;
+}
+
+bool AssetParameterModel::hasExpressionTemplateLink(const QString &paramName) const
+{
+    auto it = m_params.find(paramName);
+    if (it == m_params.end()) return false;
+    return !it->second.expressionTemplateId.isEmpty();
+}
+
+void AssetParameterModel::restoreExpressionsFromFilter()
+{
+    for (const QString &paramName : m_rows) {
+        auto it = m_params.find(paramName);
+        if (it == m_params.end()) continue;
+
+        QByteArray exprKey = QStringLiteral("kdenlive:expr.%1").arg(paramName).toUtf8();
+        if (!m_asset->property_exists(exprKey.constData())) continue;
+
+        QString expr = QString::fromUtf8(m_asset->get(exprKey.constData()));
+        if (expr.isEmpty()) continue;
+
+        // Restore base value FIRST (before expression, to avoid snapshot overwrite)
+        QByteArray baseKey = QStringLiteral("kdenlive:exprbase.%1").arg(paramName).toUtf8();
+        if (m_asset->property_exists(baseKey.constData())) {
+            it->second.expressionBaseValue = m_asset->get_double(baseKey.constData());
+        }
+
+        // Restore expression text (no baking — baked animation is already in MLT)
+        it->second.expression = expr;
+
+        // Restore template link
+        QByteArray tmplKey = QStringLiteral("kdenlive:exprtmpl.%1").arg(paramName).toUtf8();
+        if (m_asset->property_exists(tmplKey.constData())) {
+            it->second.expressionTemplateId = QString::fromUtf8(m_asset->get(tmplKey.constData()));
+        }
+
+        // Restore per-component rect expressions (kdenlive:expr.{param}.0 through .4)
+        for (int c = 0; c < 5; c++) {
+            QByteArray compExprKey = QStringLiteral("kdenlive:expr.%1.%2").arg(paramName).arg(c).toUtf8();
+            if (!m_asset->property_exists(compExprKey.constData())) continue;
+            QString compExpr = QString::fromUtf8(m_asset->get(compExprKey.constData()));
+            if (compExpr.isEmpty()) continue;
+            it->second.componentExpressions[c] = compExpr;
+
+            QByteArray compBaseKey = QStringLiteral("kdenlive:exprbase.%1.%2").arg(paramName).arg(c).toUtf8();
+            if (m_asset->property_exists(compBaseKey.constData())) {
+                it->second.componentExpressionBaseValues[c] = m_asset->get_double(compBaseKey.constData());
+            }
+        }
+        // Restore full rect animation backup
+        QByteArray rectBackupKey = QStringLiteral("kdenlive:exprbase.%1.-1").arg(paramName).toUtf8();
+        if (m_asset->property_exists(rectBackupKey.constData())) {
+            it->second.componentExpressionBaseValues[-1] = QString::fromUtf8(m_asset->get(rectBackupKey.constData()));
+        }
+    }
+}
+
+// ── AnimatedRect per-component expressions ──────────────────────────
+
+void AssetParameterModel::setRectComponentExpression(const QString &paramName, int componentIndex, const QString &expression)
+{
+    auto it = m_params.find(paramName);
+    if (it == m_params.end()) return;
+    if (componentIndex < 0 || componentIndex > 4) return;
+
+    // On first component expression: backup full rect animation for later restore
+    if (!it->second.componentExpressionBaseValues.contains(-1)) {
+        QString fullAnim = QString::fromUtf8(m_asset->get(paramName.toUtf8().constData()));
+        it->second.componentExpressionBaseValues[-1] = fullAnim;
+        QString backupProp = QStringLiteral("kdenlive:exprbase.%1.-1").arg(paramName);
+        m_asset->set(backupProp.toUtf8().constData(), fullAnim.toUtf8().constData());
+    }
+
+    // Snapshot component base value at clip in-point
+    if (!it->second.componentExpressionBaseValues.contains(componentIndex)) {
+        int snapIn = m_asset->get_int("in");
+        if (snapIn <= 0) snapIn = pCore->getItemIn(m_ownerId);
+        mlt_rect rect = m_asset->anim_get_rect(paramName.toUtf8().constData(), snapIn, -1);
+        double baseVal = 0.0;
+        switch (componentIndex) {
+        case 0:
+            baseVal = rect.x;
+            break;
+        case 1:
+            baseVal = rect.y;
+            break;
+        case 2:
+            baseVal = rect.w;
+            break;
+        case 3:
+            baseVal = rect.h;
+            break;
+        case 4:
+            baseVal = rect.o;
+            break;
+        }
+        it->second.componentExpressionBaseValues[componentIndex] = baseVal;
+        QString baseProp = QStringLiteral("kdenlive:exprbase.%1.%2").arg(paramName).arg(componentIndex);
+        m_asset->set(baseProp.toUtf8().constData(), QString::number(baseVal, 'g', 15).toUtf8().constData());
+    }
+
+    // Store expression
+    it->second.componentExpressions[componentIndex] = expression;
+
+    // Persist to MLT
+    QString exprProp = QStringLiteral("kdenlive:expr.%1.%2").arg(paramName).arg(componentIndex);
+    if (expression.isEmpty()) {
+        m_asset->clear(exprProp.toUtf8().constData());
+    } else {
+        m_asset->set(exprProp.toUtf8().constData(), expression.toUtf8().constData());
+    }
+
+    // Bake all active component expressions into composite rect
+    bakeRectExpressions(paramName);
+}
+
+QString AssetParameterModel::getRectComponentExpression(const QString &paramName, int componentIndex) const
+{
+    auto it = m_params.find(paramName);
+    if (it == m_params.end()) return {};
+    return it->second.componentExpressions.value(componentIndex);
+}
+
+void AssetParameterModel::clearRectComponentExpression(const QString &paramName, int componentIndex)
+{
+    auto it = m_params.find(paramName);
+    if (it == m_params.end()) return;
+
+    it->second.componentExpressions.remove(componentIndex);
+    it->second.componentExpressionBaseValues.remove(componentIndex);
+
+    // Clear MLT props
+    m_asset->clear(QStringLiteral("kdenlive:expr.%1.%2").arg(paramName).arg(componentIndex).toUtf8().constData());
+    m_asset->clear(QStringLiteral("kdenlive:exprbase.%1.%2").arg(paramName).arg(componentIndex).toUtf8().constData());
+
+    if (it->second.componentExpressions.isEmpty()) {
+        // No component expressions remain — restore full rect animation from backup
+        QVariant backup = it->second.componentExpressionBaseValues.value(-1);
+        it->second.componentExpressionBaseValues.clear();
+        m_asset->clear(QStringLiteral("kdenlive:exprbase.%1.-1").arg(paramName).toUtf8().constData());
+
+        if (backup.isValid() && !backup.toString().isEmpty()) {
+            m_asset->set(paramName.toUtf8().constData(), backup.toString().toUtf8().constData());
+        }
+
+        Q_EMIT modelChanged();
+        if (!m_isAudio) {
+            pCore->refreshProjectItem(m_ownerId);
+            pCore->invalidateItem(m_ownerId);
+        }
+    } else {
+        // Still have other component expressions, re-bake
+        bakeRectExpressions(paramName);
+    }
+}
+
+bool AssetParameterModel::hasRectComponentExpression(const QString &paramName) const
+{
+    auto it = m_params.find(paramName);
+    if (it == m_params.end()) return false;
+    return !it->second.componentExpressions.isEmpty();
+}
+
+double AssetParameterModel::getRectComponentBaseValue(const QString &paramName, int componentIndex) const
+{
+    auto it = m_params.find(paramName);
+    if (it == m_params.end()) return 0.0;
+    QVariant val = it->second.componentExpressionBaseValues.value(componentIndex);
+    if (val.isValid()) return val.toDouble();
+
+    // Fallback: read from MLT animation at clip in-point
+    int in = m_asset->get_int("in");
+    if (in <= 0) in = pCore->getItemIn(m_ownerId);
+    mlt_rect rect = m_asset->anim_get_rect(paramName.toUtf8().constData(), in, -1);
+    switch (componentIndex) {
+    case 0:
+        return rect.x;
+    case 1:
+        return rect.y;
+    case 2:
+        return rect.w;
+    case 3:
+        return rect.h;
+    case 4:
+        return rect.o;
+    default:
+        return 0.0;
+    }
+}
+
+void AssetParameterModel::bakeRectExpressions(const QString &paramName)
+{
+    auto it = m_params.find(paramName);
+    if (it == m_params.end()) return;
+
+    int in = m_asset->get_int("in");
+    int out = m_asset->get_int("out");
+    if (out <= 0) {
+        in = pCore->getItemIn(m_ownerId);
+        out = in + pCore->getItemDuration(m_ownerId) - 1;
+    }
+    double fps = pCore->getCurrentFps();
+    double clipDuration = static_cast<double>(out - in + 1) / fps;
+
+    // Gather clip metadata
+    int clipPosition = 0;
+    int clipDurationFrames = out - in + 1;
+    QString clipName;
+    int trackIndex = 0;
+    if (m_ownerId.type == KdenliveObjectType::TimelineClip) {
+        clipPosition = pCore->getItemPosition(m_ownerId);
+        int trackId = pCore->getItemTrack(m_ownerId);
+        auto timeline = pCore->projectManager()->getTimeline();
+        if (timeline) {
+            clipName = timeline->getClipName(m_ownerId.itemId);
+            trackIndex = timeline->getTrackPosition(trackId);
+        }
+    }
+
+    // Use the backup animation (before any expression baking) as rect source
+    // Parse it into a temporary Mlt::Properties for anim_get_rect
+    QString baseAnim = it->second.componentExpressionBaseValues.value(-1).toString();
+    Mlt::Properties tempProps;
+    if (!baseAnim.isEmpty()) {
+        tempProps.anim_set("rect", baseAnim.toUtf8().constData(), 0, out - in + 1);
+    }
+
+    QByteArray output;
+    output.reserve((out - in + 1) * 40);
+
+    for (int f = in; f <= out; f++) {
+        // Get base rect values (from original animation or defaults)
+        mlt_rect rect;
+        if (!baseAnim.isEmpty()) {
+            rect = tempProps.anim_get_rect("rect", f - in, out - in + 1);
+        } else {
+            rect = m_asset->anim_get_rect(paramName.toUtf8().constData(), f, -1);
+        }
+
+        // Override each component that has an active expression
+        for (auto compIt = it->second.componentExpressions.constBegin(); compIt != it->second.componentExpressions.constEnd(); ++compIt) {
+            int comp = compIt.key();
+            const QString &expr = compIt.value();
+            if (expr.isEmpty()) continue;
+
+            double baseVal = it->second.componentExpressionBaseValues.value(comp).toDouble();
+            double time = static_cast<double>(f - in) / fps;
+            int relFrame = f - in;
+
+            // Load audio if needed
+            QVector<float> audioPeakBoth, audioPeakLeft, audioPeakRight;
+            if (ExpressionEngine::usesAudio(expr)) {
+                ExpressionCache::loadTimelineAudioForRange(in, out, fps, audioPeakBoth, audioPeakLeft, audioPeakRight);
+            }
+
+            auto [value, error] = ExpressionCache::instance().evaluateAtFrame(expr, time, relFrame, clipDuration, fps, baseVal, 0, audioPeakBoth, audioPeakLeft,
+                                                                              audioPeakRight, clipPosition, clipDurationFrames, clipName, trackIndex);
+
+            if (error.isEmpty()) {
+                switch (comp) {
+                case 0:
+                    rect.x = value;
+                    break;
+                case 1:
+                    rect.y = value;
+                    break;
+                case 2:
+                    rect.w = value;
+                    break;
+                case 3:
+                    rect.h = value;
+                    break;
+                case 4:
+                    rect.o = value;
+                    break;
+                }
+            }
+        }
+
+        // Append frame to output: "frame=X Y W H opacity"
+        if (f > in) output.append(';');
+        char buf[128];
+        int n = std::snprintf(buf, sizeof(buf), "%d=%g %g %g %g %g", f - in, rect.x, rect.y, rect.w, rect.h, rect.o);
+        output.append(buf, n);
+    }
+
+    if (!output.isEmpty()) {
+        m_asset->set(paramName.toUtf8().constData(), output.constData());
+        Q_EMIT modelChanged();
+        if (!m_isAudio) {
+            pCore->refreshProjectItem(m_ownerId);
+            pCore->invalidateItem(m_ownerId);
+        }
+    }
 }
