@@ -9,10 +9,11 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include <KLocalizedString>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QToolButton>
 
 DoubleWidget::DoubleWidget(const QString &name, double value, double min, double max, double factor, double defaultValue, const QString &comment, int id,
-                           const QString &suffix, int decimals, bool oddOnly, bool compact, QWidget *parent)
+                           const QString &suffix, int decimals, bool oddOnly, bool compact, QWidget *parent, bool showReset)
     : QWidget(parent)
     , m_factor(factor)
 {
@@ -22,6 +23,19 @@ DoubleWidget::DoubleWidget(const QString &name, double value, double min, double
     layout->setSpacing(0);
     m_dragVal = new DragValue(name, defaultValue * m_factor, decimals, min, max, id, suffix, !compact, oddOnly, this);
     layout->addWidget(m_dragVal);
+
+    if (showReset) {
+        // Reset button — restores default value (shader params only)
+        auto *resetTb = new QToolButton(this);
+        resetTb->setIcon(QIcon::fromTheme(QStringLiteral("edit-undo")));
+        resetTb->setToolTip(i18n("Reset to default"));
+        resetTb->setAutoRaise(true);
+        int btnSize = qMax(16, m_dragVal->minimumHeight());
+        resetTb->setFixedSize(btnSize, btnSize);
+        layout->addWidget(resetTb);
+        connect(resetTb, &QToolButton::clicked, this, &DoubleWidget::slotReset);
+    }
+
     if (suffix == QStringLiteral("°")) {
         QToolButton *rotationTb = new QToolButton(this);
         rotationTb->setIcon(QIcon::fromTheme("object-rotate-right"));

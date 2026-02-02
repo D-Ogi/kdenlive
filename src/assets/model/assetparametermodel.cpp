@@ -5,6 +5,7 @@
 
 #include "assetparametermodel.hpp"
 #include "assets/keyframes/model/keyframemodellist.hpp"
+#include "assets/shaderparamparser.h"
 #include "bin/model/markerlistmodel.hpp"
 #include "bin/projectclip.h"
 #include "bin/projectitemmodel.h"
@@ -27,6 +28,7 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QString>
+#include <QTimer>
 #include <algorithm>
 #include <cmath>
 #include <mlt++/Mlt.h>
@@ -182,6 +184,7 @@ AssetParameterModel::AssetParameterModel(std::unique_ptr<Mlt::Properties> asset,
             case ParamType::Readonly:
             case ParamType::Url:
             case ParamType::UrlList:
+            case ParamType::ShaderEditor:
                 // All fine
                 converted = false;
                 break;
@@ -636,6 +639,13 @@ void AssetParameterModel::setParameter(const QString &name, const QString &param
     if (updateChildRequired) {
         Q_EMIT updateChildren({paramName});
     }
+    // Detect shader path changes for placebo.shader dynamic param injection
+    if (m_assetId == QLatin1String("placebo.shader") && name == QLatin1String("shader_path")) {
+        // Must return immediately after rebuild — paramIndex and m_rows are invalidated
+        updateShaderParams(paramValue);
+        return;
+    }
+
     // Update timeline view if necessary
     if (m_ownerId.type == KdenliveObjectType::NoItem) {
         // Used for generator clips
@@ -876,6 +886,8 @@ QVariant AssetParameterModel::data(const QModelIndex &index, int role) const
         return m_params.at(paramName).expressionTemplateId;
     case ExpressionBaseValueRole:
         return m_params.at(paramName).expressionBaseValue;
+    case GroupRole:
+        return element.attribute(QStringLiteral("group"));
     }
     return QVariant();
 }
@@ -965,6 +977,8 @@ ParamType AssetParameterModel::paramTypeFromStr(const QString &type)
         return ParamType::Readonly;
     } else if (type == QLatin1String("hidden")) {
         return ParamType::Hidden;
+    } else if (type == QLatin1String("shadereditor")) {
+        return ParamType::ShaderEditor;
     }
     qDebug() << "WARNING: Unknown type :" << type;
     return ParamType::Double;
@@ -1834,6 +1848,171 @@ std::shared_ptr<KeyframeModelList> AssetParameterModel::getKeyframeModel()
 void AssetParameterModel::resetAsset(std::unique_ptr<Mlt::Properties> asset)
 {
     m_asset = std::move(asset);
+}
+
+void AssetParameterModel::rebuildFromXml(const QDomElement &newXml)
+{
+    beginResetModel();
+
+    // Clear existing parameter data
+    m_params.clear();
+    m_rows.clear();
+    m_paramOrder.clear();
+    m_fixedParams.clear();
+    m_keyframes.reset();
+
+    // Re-parse parameters from the new XML (simplified re-run of constructor logic)
+    QDomNodeList parameterNodes = newXml.elementsByTagName(QStringLiteral("parameter"));
+    m_hideKeyframesByDefault = newXml.hasAttribute(QStringLiteral("hideKeyframes"));
+    m_requiresInOut = newXml.hasAttribute(QStringLiteral("requires_in_out"));
+
+    for (int i = 0; i < parameterNodes.count(); ++i) {
+        QDomElement currentParameter = parameterNodes.item(i).toElement();
+        QString name = currentParameter.attribute(QStringLiteral("name"));
+        QString type = currentParameter.attribute(QStringLiteral("type"));
+        QString value = currentParameter.attribute(QStringLiteral("value"));
+        ParamRow currentRow;
+        currentRow.type = paramTypeFromStr(type);
+        currentRow.xml = currentParameter;
+        if (value.isEmpty()) {
+            QVariant defaultValue = parseAttribute(QStringLiteral("default"), currentParameter);
+            value = defaultValue.toString();
+        }
+        bool isFixed = (type == QLatin1String("fixed"));
+        if (isFixed) {
+            m_fixedParams[name] = value;
+        } else if (currentRow.type == ParamType::Position) {
+            int val = value.toInt();
+            if (val < 0) {
+                int in = pCore->getItemIn(m_ownerId);
+                int out = in + pCore->getItemDuration(m_ownerId) - 1;
+                val += out;
+                value = QString::number(val);
+            }
+        } else if (isAnimated(currentRow.type) && currentRow.type != ParamType::Roto_spline) {
+            if (!value.isEmpty() && !value.contains(QLatin1Char('='))) {
+                value.prepend(QStringLiteral("%1=").arg(pCore->getItemIn(m_ownerId)));
+            }
+        }
+
+        if (!isFixed) {
+            currentRow.value = value;
+            QString title = i18n(currentParameter.firstChildElement(QStringLiteral("name")).text().toUtf8().data());
+            if (title.isEmpty() || title == QStringLiteral("(I18N_EMPTY_MESSAGE)")) {
+                title = name;
+            }
+            currentRow.name = title;
+            m_params[name] = currentRow;
+        }
+        if (!name.isEmpty()) {
+            // Check if MLT already has a value for this param (preserve existing values)
+            const char *existing = m_asset->get(name.toUtf8().constData());
+            if (existing && strlen(existing) > 0) {
+                // Keep the existing MLT value
+                if (!isFixed && m_params.count(name) > 0) {
+                    m_params[name].value = QString::fromUtf8(existing);
+                }
+            } else {
+                internalSetParameter(name, value);
+            }
+            m_paramOrder.push_back(name);
+        }
+        if (isFixed) {
+            continue;
+        }
+        m_rows.push_back(name);
+    }
+
+    endResetModel();
+    qDebug() << "rebuildFromXml: rebuilt with" << m_rows.size() << "parameters";
+}
+
+void AssetParameterModel::updateShaderParams(const QString &shaderPath)
+{
+    // Only applicable to placebo.shader effects
+    if (m_assetId != QLatin1String("placebo.shader")) {
+        return;
+    }
+    if (!m_asset || !m_asset->is_valid()) {
+        qWarning() << "updateShaderParams: m_asset is null or invalid";
+        return;
+    }
+
+    // Parse shader params from the .hook file
+    QVector<ShaderParamInfo> shaderParams = ShaderParamParser::parseFile(shaderPath);
+
+    // Get the base XML for this effect
+    QDomElement baseXml;
+    if (EffectsRepository::get()->exists(m_assetId)) {
+        baseXml = EffectsRepository::get()->getXml(m_assetId);
+    }
+    if (baseXml.isNull()) {
+        qWarning() << "updateShaderParams: cannot get base XML for" << m_assetId;
+        return;
+    }
+
+    // Remove any existing shader_param.* parameters from base XML
+    QDomNodeList existingParams = baseXml.elementsByTagName(QStringLiteral("parameter"));
+    QList<QDomElement> toRemove;
+    for (int i = 0; i < existingParams.count(); ++i) {
+        QDomElement el = existingParams.item(i).toElement();
+        if (el.attribute(QStringLiteral("name")).startsWith(QLatin1String("shader_param."))) {
+            toRemove.append(el);
+        }
+    }
+    for (const QDomElement &el : toRemove) {
+        baseXml.removeChild(el);
+    }
+
+    // Inject new shader_param.* parameters
+    QDomDocument doc = baseXml.ownerDocument();
+    for (const ShaderParamInfo &param : shaderParams) {
+        QDomElement paramEl = ShaderParamParser::toParameterElement(doc, param);
+        baseXml.appendChild(paramEl);
+    }
+
+    // Rebuild model from modified XML
+    rebuildFromXml(baseXml);
+
+    // Restore shader_param.* values from MLT filter properties.
+    // On project load, the MLT filter already has saved values but the old model
+    // didn't have shader_param.* entries (only shader_path + shader_text).
+    // On shader switch, the MLT filter may have values from the previous shader.
+    // In both cases, read directly from MLT for each new parameter.
+    // Collect keys first to avoid modifying m_params during iteration.
+    QStringList shaderParamKeys;
+    for (const auto &row : m_params) {
+        if (row.first.startsWith(QLatin1String("shader_param."))) {
+            shaderParamKeys.append(row.first);
+        }
+    }
+    for (const QString &key : std::as_const(shaderParamKeys)) {
+        const char *mltVal = m_asset->get(key.toUtf8().constData());
+        if (mltVal && strlen(mltVal) > 0) {
+            m_params[key].value = QString::fromUtf8(mltVal);
+        }
+    }
+
+    // Restore expressions from MLT properties (kdenlive:expr.shader_param.*)
+    // Expressions survive rebuild because they're stored on the MLT filter,
+    // but ParamRow.expression is cleared by rebuildFromXml — rehydrate here.
+    restoreExpressionsFromFilter();
+
+    qDebug() << "updateShaderParams: injected" << shaderParams.size() << "params from" << shaderPath;
+
+    // Defer the view rebuild to the next event loop iteration.
+    // This is critical: the call chain is UrlParamWidget::valueChanged → commitChanges
+    // → setParameter → updateShaderParams. Emitting rebuildEffect synchronously would
+    // destroy the UrlParamWidget while it's still in its own signal handler, causing a crash.
+    QTimer::singleShot(0, this, [self = shared_from_this()]() {
+        Q_EMIT self->rebuildEffect(self);
+        Q_EMIT self->modelChanged();
+
+        if (!self->m_isAudio) {
+            pCore->refreshProjectItem(self->m_ownerId);
+            pCore->invalidateItem(self->m_ownerId);
+        }
+    });
 }
 
 bool AssetParameterModel::hasMoreThanOneKeyframe() const
