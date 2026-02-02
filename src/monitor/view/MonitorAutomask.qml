@@ -99,6 +99,24 @@ Item {
             root.isBrushing = false
             root.clearBrushCanvas()
         }
+        updateKeyBindingTooltip()
+    }
+
+    onBrushModeChanged: {
+        updateKeyBindingTooltip()
+    }
+
+    function updateKeyBindingTooltip() {
+        if (!frameArea.containsMouse) {
+            return
+        }
+        if (root.maskMode === K.MaskModeType.MaskPreview) {
+            controller.setWidgetKeyBinding();
+        } else if (root.brushMode) {
+            controller.setWidgetKeyBinding(xi18nc("@info:whatsthis","<shortcut>Drag</shortcut> to paint a brush stroke, <shortcut>Alt+drag</shortcut> to exclude, <shortcut>Shift+click</shortcut> to add a point, <shortcut>Ctrl+drag</shortcut> to draw a box."));
+        } else {
+            controller.setWidgetKeyBinding(xi18nc("@info:whatsthis","<shortcut>Click</shortcut> to add a point, <shortcut>Alt+click</shortcut> to exclude, <shortcut>Ctrl+drag</shortcut> to draw a box, <shortcut>Shift+click</shortcut> to extend."));
+        }
     }
 
     function updatePoints(keyframes, types, points) {
@@ -297,11 +315,7 @@ Item {
                     isBrushEvent = false
                 }
                 onEntered: {
-                    if (root.maskMode === K.MaskModeType.MaskPreview) {
-                        controller.setWidgetKeyBinding();
-                        return
-                    }
-                    controller.setWidgetKeyBinding(xi18nc("@info:whatsthis","<shortcut>Drag</shortcut> to paint a brush stroke, <shortcut>Alt+drag</shortcut> to exclude, <shortcut>Shift+click</shortcut> to add a point, <shortcut>Ctrl+drag</shortcut> to draw a box."));
+                    root.updateKeyBindingTooltip()
                 }
                 onExited: {
                     controller.setWidgetKeyBinding();
@@ -449,7 +463,7 @@ Item {
         id: infoLabel
         anchors.centerIn: parent
         padding: 5
-        text: root.maskMode != K.MaskModeType.MaskPreview ? i18n("Paint a brush stroke to select an object.\nAlt+drag to exclude a zone.\nShift+click to add a point, Ctrl+drag for a box.") : i18n("Previewing video mask")
+        text: root.maskMode === K.MaskModeType.MaskPreview ? i18n("Previewing video mask") : root.brushMode ? i18n("Paint a brush stroke to select an object.\nAlt+drag to exclude a zone.\nShift+click to add a point, Ctrl+drag for a box.") : i18n("Click to add a point, Alt+click to exclude.\nCtrl+drag to draw a box.\nShift+click to extend selection.")
         visible: root.centerPoints.length == 0 && !frameBox.visible && !frameArea.containsMouse && !generateLabel.visible && !outsideLabel.visible && keyframes.length == 0
         background: Rectangle {
             color: Qt.rgba(activePalette.window.r, activePalette.window.g, activePalette.window.b, 0.8)
