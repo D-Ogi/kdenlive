@@ -46,6 +46,9 @@ class MonitorProxy : public QObject
     Q_PROPERTY(int maskOpacity READ maskOpacity WRITE setMaskOpacity NOTIFY maskOpacityChanged)
     Q_PROPERTY(bool maskInverted READ maskInverted WRITE setMaskInverted)
     Q_PROPERTY(MaskModeType::MaskCreationMode maskMode MEMBER m_maskMode NOTIFY maskModeChanged)
+    /** @brief Overlay mode: 0=Color Overlay, 1=Alpha Boundary, 2=Alpha Channel */
+    Q_PROPERTY(int maskOverlayMode READ maskOverlayMode WRITE setMaskOverlayMode NOTIFY maskOverlayModeChanged)
+    Q_PROPERTY(int maskProgress READ maskProgress WRITE setMaskProgress NOTIFY maskProgressChanged)
     Q_PROPERTY(double speed MEMBER m_speed NOTIFY speedChanged)
     Q_PROPERTY(QStringList lastClips MEMBER m_lastClips NOTIFY lastClipsChanged)
     Q_PROPERTY(QString dragType MEMBER m_dragType NOTIFY dragTypeChanged)
@@ -83,6 +86,10 @@ public:
     void setMaskInverted(bool);
     void setMaskMode(MaskModeType::MaskCreationMode ix);
     MaskModeType::MaskCreationMode maskMode() const;
+    int maskOverlayMode() const;
+    void setMaskOverlayMode(int mode);
+    int maskProgress() const;
+    void setMaskProgress(int progress);
     const QString trimmingTC1() const;
     const QString trimmingTC2() const;
     const QString timecode() const;
@@ -182,6 +189,8 @@ Q_SIGNALS:
     void showSafezoneChanged();
     void maskOpacityChanged();
     void maskModeChanged();
+    void maskOverlayModeChanged();
+    void maskProgressChanged();
     void builtinEffectsEnabledChanged();
     void addRemoveKeyframe(bool addOnly = false);
     /** @brief Seek to an effect keyframe
@@ -252,11 +261,13 @@ private:
     bool m_switchFlag{false};
     bool m_isKeyframe{false};
     bool m_cursorOutsideEffect{true};
-
-protected:
     QUrl m_previewOverlay;
     /** @brief Mode for mask overlay. 0 = preview keyframe image, 1 = preview video mask*/
     MaskModeType::MaskCreationMode m_maskMode{MaskModeType::MaskNone};
+    /** @brief Overlay visualization mode: 0=Color Overlay, 1=Alpha Boundary, 2=Alpha Channel */
+    int m_maskOverlayMode{0};
+    /** @brief Mask generation progress: 0-100, -1 = not generating */
+    int m_maskProgress{-1};
 
 public Q_SLOTS:
     void updateClipBounds(const QVector <QPoint>&bounds);

@@ -132,11 +132,14 @@ MaskManager::MaskManager(QWidget *parent)
         Q_EMIT progressUpdate(progress, false);
         samProgress->setVisible(visible);
         buttonAbort->setVisible(visible);
+        // Forward progress to monitor QML for span visualization
+        pCore->getMonitor(Kdenlive::ClipMonitor)->getControllerProxy()->setMaskProgress(visible ? progress : -1);
     });
     connect(m_maskHelper, &AutomaskHelper::samJobFinished, this, [this]() {
         buttonPreview->setChecked(false);
         buttonEdit->setChecked(false);
         maskTools->setCurrentIndex(0);
+        pCore->getMonitor(Kdenlive::ClipMonitor)->getControllerProxy()->setMaskProgress(-1);
         disconnectMonitor();
     });
     connect(m_maskHelper, &AutomaskHelper::processCrashed, this, [this](QString errorMessage) {
@@ -145,6 +148,7 @@ MaskManager::MaskManager(QWidget *parent)
         buttonPreview->setChecked(false);
         buttonEdit->setChecked(false);
         maskTools->setCurrentIndex(0);
+        clipMon->getControllerProxy()->setMaskProgress(-1);
         Q_EMIT pCore->processInvalidFilter(QString(), i18n("Mask plugin crashed"), errorMessage);
         disconnectMonitor();
     });
@@ -227,6 +231,9 @@ bool MaskManager::initMaskMode(bool autoAdd, bool editMode)
         connect(clipMon, &Monitor::moveMonitorControlPoint, this, &MaskManager::moveControlPoint, Qt::UniqueConnection);
         connect(clipMon, &Monitor::addMonitorControlPoint, this, &MaskManager::addControlPoint, Qt::UniqueConnection);
         connect(clipMon, &Monitor::addMonitorControlRect, this, &MaskManager::addControlRect, Qt::UniqueConnection);
+        connect(clipMon, &Monitor::addMonitorControlStroke, this, &MaskManager::addControlStroke, Qt::UniqueConnection);
+        connect(clipMon, &Monitor::maskUndoAction, this, &MaskManager::undoMaskAction, Qt::UniqueConnection);
+        connect(clipMon, &Monitor::maskRedoAction, this, &MaskManager::redoMaskAction, Qt::UniqueConnection);
         connect(clipMon, &Monitor::disablePreviewMask, this, &MaskManager::abortPreviewByMonitor, Qt::UniqueConnection);
         connect(pCore->getMonitor(Kdenlive::ClipMonitor)->getControllerProxy(), &MonitorProxy::positionChanged, m_maskHelper, &AutomaskHelper::monitorSeek,
                 Qt::UniqueConnection);
@@ -331,15 +338,9 @@ void MaskManager::exportFrames(bool autoAdd, bool editMode)
 
 void MaskManager::addControlPoint(int position, QSize frameSize, int xPos, int yPos, bool extend, bool exclude)
 {
-    if (position < m_zone.x()) {
-        qDebug() << "/// POSITION OUTSIDE ZONE!!!";
-    }
     position -= m_zone.x();
     if (!QFile::exists(m_maskFolder.absoluteFilePath(QStringLiteral("source-frames/%1.jpg").arg(position, 5, 10, QLatin1Char('0'))))) {
-        // Frame has not been extracted
-        qDebug() << "/// FILE FOR FRAME: " << position
-                 << " DOES NOT EXIST:" << m_maskFolder.absoluteFilePath(QStringLiteral("source-frames/%1.jpg").arg(position, 5, 10, QLatin1Char('0')));
-        Q_EMIT m_maskHelper->showMessage(i18n("Missing source frames"));
+        m_maskHelper->showMessage(i18n("Missing source frames"));
         return;
     }
     m_maskHelper->addMonitorControlPoint(position, frameSize, xPos, yPos, extend, exclude);
@@ -347,14 +348,8 @@ void MaskManager::addControlPoint(int position, QSize frameSize, int xPos, int y
 
 void MaskManager::moveControlPoint(int ix, int position, QSize frameSize, int xPos, int yPos)
 {
-    if (position < m_zone.x()) {
-        qDebug() << "/// POSITION OUTSIDE ZONE!!!";
-    }
     position -= m_zone.x();
     if (!QFile::exists(m_maskFolder.absoluteFilePath(QStringLiteral("source-frames/%1.jpg").arg(position, 5, 10, QLatin1Char('0'))))) {
-        // Frame has not been extracted
-        qDebug() << "/// FILE FOR FRAME: " << position
-                 << " DOES NOT EXIST:" << m_maskFolder.absoluteFilePath(QStringLiteral("%1.jpg").arg(position, 5, 10, QLatin1Char('0')));
         return;
     }
     m_maskHelper->moveMonitorControlPoint(ix, position, frameSize, xPos, yPos);
@@ -362,17 +357,31 @@ void MaskManager::moveControlPoint(int ix, int position, QSize frameSize, int xP
 
 void MaskManager::addControlRect(int position, QSize frameSize, const QRect rect, bool extend)
 {
-    if (position < m_zone.x()) {
-        qDebug() << "/// POSITION OUTSIDE ZONE!!!";
-    }
     position -= m_zone.x();
     if (!QFile::exists(m_maskFolder.absoluteFilePath(QStringLiteral("source-frames/%1.jpg").arg(position, 5, 10, QLatin1Char('0'))))) {
-        // Frame has not been extracted
-        qDebug() << "/// FILE FOR FRAME: " << position
-                 << " DOES NOT EXIST:" << m_maskFolder.absoluteFilePath(QStringLiteral("%1.jpg").arg(position, 5, 10, QLatin1Char('0')));
         return;
     }
     m_maskHelper->addMonitorControlRect(position, frameSize, rect, extend);
+}
+
+void MaskManager::addControlStroke(int position, QSize frameSize, const QList<QPoint> &points, bool isExclude)
+{
+    position -= m_zone.x();
+    if (!QFile::exists(m_maskFolder.absoluteFilePath(QStringLiteral("source-frames/%1.jpg").arg(position, 5, 10, QLatin1Char('0'))))) {
+        m_maskHelper->showMessage(i18n("Missing source frames"));
+        return;
+    }
+    m_maskHelper->addMonitorControlStroke(position, frameSize, points, isExclude);
+}
+
+void MaskManager::undoMaskAction()
+{
+    m_maskHelper->undoAction();
+}
+
+void MaskManager::redoMaskAction()
+{
+    m_maskHelper->redoAction();
 }
 
 std::shared_ptr<ProjectClip> MaskManager::getOwnerClip()
@@ -570,7 +579,6 @@ void MaskManager::applyMask()
     int out = item->data(0, MASKOUT).toInt();
     m_filterOwner = m_owner;
 
-    qDebug() << "//// APPLYING MASK FILE TO: " << maskFile << " / ID: " << m_filterOwner.itemId;
     // Focus asset monitor
     if (m_filterOwner == m_owner) {
         Monitor *clipMon = pCore->getMonitor(m_filterOwner.type == KdenliveObjectType::BinClip ? Kdenlive::ClipMonitor : Kdenlive::ProjectMonitor);
@@ -587,8 +595,7 @@ void MaskManager::applyMask()
     if (stack) {
         stack->appendEffect(QStringLiteral("shape"), true, params);
     } else {
-        // Warning, something is not normal..
-        qDebug() << "//// ERROR NO EFFECT STACK\n";
+        qWarning() << "MaskManager::applyMask: No effect stack found for" << m_filterOwner.itemId;
     }
     if (buttonPreview->isChecked() || buttonEdit->isChecked()) {
         // Disable preview
@@ -642,7 +649,6 @@ void MaskManager::importMask()
             pCore->pushUndo(undo, redo, i18nc("@action", "Add clip"));
         }
     }
-    qDebug() << "/////////// final xml" << xml.toString();
 }
 
 void MaskManager::abortPreviewByMonitor()
@@ -659,6 +665,9 @@ void MaskManager::disconnectMonitor()
         disconnect(clipMon, &Monitor::moveMonitorControlPoint, this, &MaskManager::moveControlPoint);
         disconnect(clipMon, &Monitor::addMonitorControlPoint, this, &MaskManager::addControlPoint);
         disconnect(clipMon, &Monitor::addMonitorControlRect, this, &MaskManager::addControlRect);
+        disconnect(clipMon, &Monitor::addMonitorControlStroke, this, &MaskManager::addControlStroke);
+        disconnect(clipMon, &Monitor::maskUndoAction, this, &MaskManager::undoMaskAction);
+        disconnect(clipMon, &Monitor::maskRedoAction, this, &MaskManager::redoMaskAction);
         disconnect(clipMon, &Monitor::disablePreviewMask, this, &MaskManager::abortPreviewByMonitor);
         disconnect(pCore->getMonitor(Kdenlive::ClipMonitor)->getControllerProxy(), &MonitorProxy::positionChanged, m_maskHelper, &AutomaskHelper::monitorSeek);
         m_connected = false;

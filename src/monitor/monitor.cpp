@@ -1301,6 +1301,16 @@ void Monitor::keyPressEvent(QKeyEvent *event)
         Q_EMIT passKeyPress(event);
         return;
     }
+    // Handle Ctrl+Z / Ctrl+Shift+Z for mask mode undo/redo
+    if (maskMode() != MaskModeType::MaskNone && event->key() == Qt::Key_Z && (event->modifiers() & Qt::ControlModifier)) {
+        if (event->modifiers() & Qt::ShiftModifier) {
+            Q_EMIT maskRedoAction();
+        } else {
+            Q_EMIT maskUndoAction();
+        }
+        event->accept();
+        return;
+    }
     QWidget::keyPressEvent(event);
 }
 
@@ -3224,6 +3234,51 @@ void Monitor::addControlRect(double x, double y, double width, double height, bo
     QRect rect(qRound(x * fSize.width()), qRound(y * fSize.height()), qRound(width * fSize.width()), qRound(height * fSize.height()));
     int pos = position();
     Q_EMIT addMonitorControlRect(pos, fSize, rect, extend);
+}
+
+void Monitor::addControlStroke(const QVariant &pointsVariant, bool isExclude)
+{
+    const QVariantList points = pointsVariant.toList();
+    QSize fSize = pCore->getCurrentFrameDisplaySize();
+    int pos = position();
+    // Sample the stroke path at regular intervals (~15px apart) and convert to pixel coordinates
+    const double sampleDistance = 15.0;
+    QList<QPoint> sampledPoints;
+    double accumulatedDist = 0;
+    double prevPx = -1, prevPy = -1;
+    for (const QVariant &pt : points) {
+        QPointF p = pt.toPointF();
+        double px = p.x() * fSize.width();
+        double py = p.y() * fSize.height();
+        if (prevPx < 0) {
+            // Always include the first point
+            sampledPoints.append(QPoint(qRound(px), qRound(py)));
+            prevPx = px;
+            prevPy = py;
+            continue;
+        }
+        double dx = px - prevPx;
+        double dy = py - prevPy;
+        double dist = std::sqrt(dx * dx + dy * dy);
+        accumulatedDist += dist;
+        if (accumulatedDist >= sampleDistance) {
+            sampledPoints.append(QPoint(qRound(px), qRound(py)));
+            accumulatedDist = 0;
+        }
+        prevPx = px;
+        prevPy = py;
+    }
+    // Always include the last point if different from the last sampled
+    if (!points.isEmpty()) {
+        QPointF last = points.last().toPointF();
+        QPoint lastPx(qRound(last.x() * fSize.width()), qRound(last.y() * fSize.height()));
+        if (sampledPoints.isEmpty() || sampledPoints.last() != lastPx) {
+            sampledPoints.append(lastPx);
+        }
+    }
+    if (!sampledPoints.isEmpty()) {
+        Q_EMIT addMonitorControlStroke(pos, fSize, sampledPoints, isExclude);
+    }
 }
 
 MaskModeType::MaskCreationMode Monitor::maskMode()
