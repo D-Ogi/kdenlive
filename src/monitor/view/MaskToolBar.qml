@@ -53,6 +53,17 @@ MouseArea {
         Column {
             width: parent.width
             Kdenlive.MonitorToolButton {
+                id: brushToolButton
+                objectName: "brushTool"
+                iconName: "draw-brush"
+                toolTipText: root.brushMode ? i18n("Brush Tool (Active) — Click to switch to Point mode") : i18n("Point Tool (Active) — Click to switch to Brush mode")
+                checked: root.brushMode
+                visible: root.maskMode != Kdenlive.MaskModeType.MaskPreview
+                onClicked: {
+                    root.brushMode = !root.brushMode
+                }
+            }
+            Kdenlive.MonitorToolButton {
                 id: fullscreenButton
                 objectName: "fullScreen"
                 iconName: "view-fullscreen"
@@ -64,7 +75,7 @@ MouseArea {
                 iconName: "media-record"
                 toolTipText: i18n("Generate Mask")
                 checkable: false
-                visible: root.maskMode != MaskModeType.MaskPreview
+                visible: root.maskMode != Kdenlive.MaskModeType.MaskPreview
                 onClicked: {
                     generateLabel.visible = true
                     if (root.keyframes.length > 0 || (root.boxCoords[2] > 0 && root.boxCoords[3] > 0)) {
@@ -90,6 +101,18 @@ MouseArea {
                 }
             }
             Kdenlive.MonitorToolButton {
+                objectName: "overlayMode"
+                iconName: controller.maskOverlayMode === 0 ? "color-fill" : controller.maskOverlayMode === 1 ? "draw-polyline" : "visibility"
+                toolTipText: {
+                    if (controller.maskOverlayMode === 0) return i18n("Overlay: Color (click to switch to Boundary)")
+                    if (controller.maskOverlayMode === 1) return i18n("Overlay: Boundary (click to switch to Alpha)")
+                    return i18n("Overlay: Alpha Channel (click to switch to Color)")
+                }
+                onClicked: {
+                    controller.maskOverlayMode = (controller.maskOverlayMode + 1) % 3
+                }
+            }
+            Kdenlive.MonitorToolButton {
                 objectName: "invertMask"
                 iconName: "edit-select-invert"
                 toolTipText: i18n("Invert Mask")
@@ -100,7 +123,7 @@ MouseArea {
             Kdenlive.MonitorToolButton {
                 objectName: "abortMask"
                 iconName: "dialog-close"
-                toolTipText: root.maskMode != MaskModeType.MaskPreview ? i18n("Exit Mask Creation") : i18n("Exit Preview Mode")
+                toolTipText: root.maskMode != Kdenlive.MaskModeType.MaskPreview ? i18n("Exit Mask Creation") : i18n("Exit Preview Mode")
                 checkable: false
                 onClicked: {
                     root.exitMaskPreview()

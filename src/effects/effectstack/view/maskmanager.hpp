@@ -41,6 +41,9 @@ private Q_SLOTS:
     void addControlPoint(int position, QSize frameSize, int xPos, int yPos, bool extend, bool exclude);
     void moveControlPoint(int ix, int position, QSize frameSize, int xPos, int yPos);
     void addControlRect(int position, QSize frameSize, const QRect rect, bool extend);
+    void addControlStroke(int position, QSize frameSize, const QList<QPoint> &points, bool isExclude);
+    void undoMaskAction();
+    void redoMaskAction();
     void previewMask(bool show);
     void editMask(bool show);
     void generateMask();

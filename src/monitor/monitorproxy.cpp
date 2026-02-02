@@ -100,9 +100,34 @@ int MonitorProxy::maskOpacity() const
 void MonitorProxy::setMaskOpacity(int opacity)
 {
     KdenliveSettings::setMaskOpacity(qBound(0, opacity, 100));
-    qDebug() << " = = = SETTING MASK OPACITY";
     Q_EMIT maskOpacityChanged();
     Q_EMIT refreshMask();
+}
+
+int MonitorProxy::maskOverlayMode() const
+{
+    return m_maskOverlayMode;
+}
+
+void MonitorProxy::setMaskOverlayMode(int mode)
+{
+    if (m_maskOverlayMode != mode) {
+        m_maskOverlayMode = qBound(0, mode, 2);
+        Q_EMIT maskOverlayModeChanged();
+    }
+}
+
+int MonitorProxy::maskProgress() const
+{
+    return m_maskProgress;
+}
+
+void MonitorProxy::setMaskProgress(int progress)
+{
+    if (m_maskProgress != progress) {
+        m_maskProgress = progress;
+        Q_EMIT maskProgressChanged();
+    }
 }
 
 bool MonitorProxy::maskInverted() const

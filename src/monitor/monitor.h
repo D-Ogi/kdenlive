@@ -325,6 +325,8 @@ private Q_SLOTS:
     void addControlPoint(double x, double y, bool extend, bool exclude);
     void moveControlPoint(int ix, double x, double y);
     void addControlRect(double x, double y, double width, double height, bool extend);
+    /** @brief Process a brush stroke from the QML overlay. Points are normalized (0..1). */
+    void addControlStroke(const QVariant &points, bool isExclude);
     /** @brief Check if powermanagement sleep should be inhibited*/
     void updatePowerManagement();
 
@@ -449,7 +451,13 @@ Q_SIGNALS:
     void addMonitorControlPoint(int position, const QSize frameSize, int xPos, int yPos, bool extend, bool exclude);
     void moveMonitorControlPoint(int ix, int position, const QSize frameSize, int xPos, int yPos);
     void addMonitorControlRect(int position, const QSize frameSize, const QRect rect, bool extend);
+    /** @brief A brush stroke was drawn. Points are pixel coordinates sampled at regular intervals. */
+    void addMonitorControlStroke(int position, const QSize frameSize, const QList<QPoint> &points, bool isExclude);
     void generateMask();
+    /** @brief Undo the last mask editing action (Ctrl+Z in mask mode) */
+    void maskUndoAction();
+    /** @brief Redo the last undone mask editing action (Ctrl+Shift+Z in mask mode) */
+    void maskRedoAction();
     void disablePreviewMask();
     void sceneChanged(MonitorSceneType sceneType);
     void effectRotationChanged(double rotation);

@@ -67,6 +67,12 @@ Item {
     property string baseThumbPath
     property int overlayMargin: 0
     property int maskMode: controller.maskMode
+    // Brush tool properties
+    property int brushSize: 20
+    property bool brushMode: true // true = brush is default tool
+    property bool isBrushing: false
+    property var currentStrokePoints: []
+    property bool currentStrokeIsExclude: false
     Component.onCompleted: {
         controller.rulerHeight = root.zoomOffset
     }
@@ -77,11 +83,21 @@ Item {
         } else if (outsideLabel.visible) {
             outsideLabel.visible = false
         }
+        // Clear stale brush canvas on seek (but not mid-stroke)
+        if (!root.isBrushing) {
+            root.clearBrushCanvas()
+        }
     }
 
     onMaskModeChanged: {
         if (root.maskMode == K.MaskModeType.MaskPreview) {
             generateLabel.visible = false
+        }
+        // Reset brush state if mode changes mid-stroke
+        if (frameArea.isBrushEvent) {
+            frameArea.isBrushEvent = false
+            root.isBrushing = false
+            root.clearBrushCanvas()
         }
     }
 
@@ -103,6 +119,11 @@ Item {
     function updateClickCapture() {
         root.captureRightClick = false
     }
+
+    function clearBrushCanvas() {
+        root.currentStrokePoints = []
+        brushCanvas.requestPaint()
+    }
     
     FontMetrics {
         id: fontMetrics
@@ -117,6 +138,7 @@ Item {
     signal moveControlPoint(int index, real x, real y)
     signal addControlPoint(real x, real y, bool extend, bool exclude)
     signal addControlRect(real x, real y, real width, real height, bool extend)
+    signal addControlStroke(var points, bool isExclude)
     signal generateMask()
     signal exitMaskPreview()
 
@@ -178,66 +200,74 @@ Item {
                 anchors.fill: frame
                 property bool shiftClick: false
                 property bool ctrlClick: false
+                property bool altClick: false
                 property bool handleEvent: false
-                // Pan is when user want to move the view
                 property bool isPanEvent: false
-                // Rect is when drawing a selection rect
                 property bool isRectEvent: false
+                property bool isBrushEvent: false
                 property real clickPointX: 0
                 property real clickPointY: 0
                 property real xPos: 0
                 property real yPos: 0
                 onPressed: mouse => {
-                    console.log('GOT FRAME HEIGHT: ', frame.height)
                     if (root.maskMode != K.MaskModeType.MaskPreview) {
                         shiftClick = mouse.modifiers & Qt.ShiftModifier
                         ctrlClick = mouse.modifiers & Qt.ControlModifier
+                        altClick = mouse.modifiers & Qt.AltModifier
                         clickPointX = mouseX
                         clickPointY = mouseY
                         selectionRect.x = mouseX
                         selectionRect.y = mouseY
                         isRectEvent = false
                         isPanEvent = false
+                        isBrushEvent = false
+                        // Start brush stroke if in brush mode and no Shift (point) or Ctrl (box)
+                        if (root.brushMode && !shiftClick && !ctrlClick) {
+                            isBrushEvent = true
+                            root.isBrushing = true
+                            root.currentStrokeIsExclude = altClick
+                            root.currentStrokePoints = [Qt.point(mouseX / frame.width, mouseY / frame.height)]
+                            brushCanvas.lastX = mouseX
+                            brushCanvas.lastY = mouseY
+                            brushCanvas.requestPaint()
+                        }
                     } else {
                         mouse.accepted = false;
                     }
                     handleEvent = mouse.button == Qt.LeftButton
                 }
                 onPositionChanged: mouse => {
-                    if (pressed && !isPanEvent && root.maskMode < 2 && ctrlClick && (Math.abs(mouseX - selectionRect.x) + Math.abs(mouseY - selectionRect.y) > Qt.styleHints.startDragDistance)) {
-                        isPanEvent = true
+                    if (!pressed) return
+                    if (isBrushEvent) {
+                        // Accumulate brush stroke points
+                        var nx = mouseX / frame.width
+                        var ny = mouseY / frame.height
+                        var pts = root.currentStrokePoints
+                        pts.push(Qt.point(nx, ny))
+                        root.currentStrokePoints = pts
+                        brushCanvas.lastX = mouseX
+                        brushCanvas.lastY = mouseY
+                        brushCanvas.requestPaint()
+                        return
+                    }
+                    if (!isPanEvent && root.maskMode !== K.MaskModeType.MaskPreview && ctrlClick && (Math.abs(mouseX - selectionRect.x) + Math.abs(mouseY - selectionRect.y) > Qt.styleHints.startDragDistance)) {
+                        isRectEvent = true
+                        selectionRect.visible = true
                         mouse.accepted = true;
-                    } else if (!isPanEvent) {
-                        if (isRectEvent) {
-                            selectionRect.width = Math.abs(mouseX - clickPointX)
-                            if (mouseX < clickPointX) {
-                                selectionRect.x = mouseX
-                            }
-                            selectionRect.height = Math.abs(mouseY - clickPointY)
-                            if (mouseY < clickPointY) {
-                                selectionRect.y = mouseY
-                            }
-                        } else if (pressed && (Math.abs(mouseX - selectionRect.x) + Math.abs(mouseY - selectionRect.y) > Qt.styleHints.startDragDistance)) {
-                            isRectEvent = true
-                            selectionRect.visible = true
-                            if (mouseX < selectionRect.x) {
-                                selectionRect.width = selectionRect.x + selectionRect.width - mouseX
-                                selectionRect.x = mouseX
-                            } else {
-                                selectionRect.width = mouseX - selectionRect.x
-                            }
-                            if (mouseY < selectionRect.y) {
-                                selectionRect.height = selectionRect.y + selectionRect.height - mouseY
-                                selectionRect.y = mouseY
-                            } else {
-                                selectionRect.height = mouseY - selectionRect.y
-                            }
+                    }
+                    if (isRectEvent) {
+                        selectionRect.width = Math.abs(mouseX - clickPointX)
+                        if (mouseX < clickPointX) {
+                            selectionRect.x = mouseX
+                        }
+                        selectionRect.height = Math.abs(mouseY - clickPointY)
+                        if (mouseY < clickPointY) {
+                            selectionRect.y = mouseY
                         }
                     }
                 }
                 onReleased: mouse => {
-                    console.log("Monitor SCENE RELEASED...")
-                    if (root.maskMode == 2) {
+                    if (root.maskMode === K.MaskModeType.MaskPreview) {
                         mouse.accepted = false
                         handleEvent = false
                         return;
@@ -245,40 +275,33 @@ Item {
                     root.captureRightClick = false
                     selectionRect.visible = false
                     if (handleEvent) {
-                        if (isRectEvent) {
-                            // Rect selection
+                        if (isBrushEvent && root.currentStrokePoints.length > 0) {
+                            // Emit brush stroke
+                            root.addControlStroke(root.currentStrokePoints, root.currentStrokeIsExclude)
+                            root.isBrushing = false
+                            generateLabel.visible = true
+                        } else if (isRectEvent) {
                             xPos = selectionRect.x / frame.width
                             yPos = selectionRect.y / frame.height
                             addControlRect(xPos, yPos, selectionRect.width / frame.width, selectionRect.height / frame.height, shiftClick)
                             generateLabel.visible = true
-                        } else if (!isPanEvent) {
-                            // Single point selection
+                        } else if (!isPanEvent && !isBrushEvent) {
+                            // Single point selection (Shift+click)
                             xPos = mouse.x / frame.width
                             yPos = mouse.y / frame.height
-                            addControlPoint(xPos, yPos, shiftClick, ctrlClick)
+                            addControlPoint(xPos, yPos, shiftClick, altClick)
                             generateLabel.visible = true
                         }
                     }
                     handleEvent = false
+                    isBrushEvent = false
                 }
-                /*onClicked: mouse => {
-                    if (root.maskMode == 1) {
-                        mouse.accepted = false;
-                        return;
-                    }
-                    if (mouse.button == Qt.LeftButton && !isDragEvent) {
-                        xPos = mouse.x / frame.width
-                        yPos = mouse.y / frame.height
-                        addControlPoint(xPos, yPos, shiftClick, ctrlClick)
-                        generateLabel.visible = true
-                    }
-                }*/
                 onEntered: {
                     if (root.maskMode === K.MaskModeType.MaskPreview) {
                         controller.setWidgetKeyBinding();
                         return
                     }
-                    controller.setWidgetKeyBinding(xi18nc("@info:whatsthis","<shortcut>Click</shortcut> or <shortcut>drag a box</shortcut> to start a mask, <shortcut>Shift+click</shortcut> to include another zone, <shortcut>Ctrl+click</shortcut> to exclude a zone."));
+                    controller.setWidgetKeyBinding(xi18nc("@info:whatsthis","<shortcut>Drag</shortcut> to paint a brush stroke, <shortcut>Alt+drag</shortcut> to exclude, <shortcut>Shift+click</shortcut> to add a point, <shortcut>Ctrl+drag</shortcut> to draw a box."));
                 }
                 onExited: {
                     controller.setWidgetKeyBinding();
@@ -290,6 +313,33 @@ Item {
                     border.width: 1
                 }
             }
+            // Brush stroke canvas overlay
+            Canvas {
+                id: brushCanvas
+                anchors.fill: frame
+                visible: root.maskMode != K.MaskModeType.MaskPreview
+                property real lastX: 0
+                property real lastY: 0
+                onPaint: {
+                    var ctx = getContext("2d")
+                    if (root.currentStrokePoints.length < 2) {
+                        ctx.reset()
+                        return
+                    }
+                    ctx.reset()
+                    ctx.lineWidth = root.brushSize * root.scalex
+                    ctx.lineCap = "round"
+                    ctx.lineJoin = "round"
+                    ctx.strokeStyle = root.currentStrokeIsExclude ? "rgba(200, 0, 0, 0.5)" : "rgba(0, 180, 0, 0.5)"
+                    ctx.beginPath()
+                    var pts = root.currentStrokePoints
+                    ctx.moveTo(pts[0].x * frame.width, pts[0].y * frame.height)
+                    for (var i = 1; i < pts.length; i++) {
+                        ctx.lineTo(pts[i].x * frame.width, pts[i].y * frame.height)
+                    }
+                    ctx.stroke()
+                }
+            }
             Image {
                 id: maskPreview
                 anchors.fill: frame
@@ -299,6 +349,7 @@ Item {
                 visible: root.maskMode != K.MaskModeType.MaskPreview
                 onSourceChanged: {
                     generateLabel.visible = false
+                    root.clearBrushCanvas()
                     if (opacity == 0 && source != '') {
                         // Update opacity to ensure we see something
                         controller.maskOpacity = 50
@@ -386,12 +437,19 @@ Item {
             color: keyframes.length == 0 ? "darkred" : Qt.rgba(activePalette.window.r, activePalette.window.g, activePalette.window.b, 0.8)
             radius: 5
         }
+        SequentialAnimation on opacity {
+            id: pulseAnim
+            running: generateLabel.visible && root.keyframes.length > 0
+            loops: Animation.Infinite
+            NumberAnimation { from: 1.0; to: 0.4; duration: 800; easing.type: Easing.InOutQuad }
+            NumberAnimation { from: 0.4; to: 1.0; duration: 800; easing.type: Easing.InOutQuad }
+        }
     }
     Label {
         id: infoLabel
         anchors.centerIn: parent
         padding: 5
-        text: root.maskMode != K.MaskModeType.MaskPreview ? i18n("Click on an object or draw a box to start a mask.\nShift+click to include another zone.\nCtrl+click to exclude a zone.") : i18n("Previewing video mask")
+        text: root.maskMode != K.MaskModeType.MaskPreview ? i18n("Paint a brush stroke to select an object.\nAlt+drag to exclude a zone.\nShift+click to add a point, Ctrl+drag for a box.") : i18n("Previewing video mask")
         visible: root.centerPoints.length == 0 && !frameBox.visible && !frameArea.containsMouse && !generateLabel.visible && !outsideLabel.visible && keyframes.length == 0
         background: Rectangle {
             color: Qt.rgba(activePalette.window.r, activePalette.window.g, activePalette.window.b, 0.8)
@@ -462,6 +520,28 @@ Item {
                 color: 'darkred'
             }
             visible: firstTimer.running
+        }
+    }
+    // Mask generation progress bar (span indicator)
+    Rectangle {
+        id: maskProgressBar
+        anchors {
+            left: root.left
+            right: root.right
+            bottom: clipMonitorRuler.top
+        }
+        height: 3
+        color: "transparent"
+        visible: controller.maskProgress >= 0
+        Rectangle {
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            width: parent.width * Math.max(0, Math.min(controller.maskProgress, 100)) / 100
+            color: "#44bb44"
+            Behavior on width {
+                NumberAnimation { duration: 200; easing.type: Easing.OutQuad }
+            }
         }
     }
     MonitorRuler {
