@@ -76,6 +76,30 @@ void AssetParameterView::setModel(const std::shared_ptr<AssetParameterModel> &mo
     });
     Q_EMIT updatePresets();
     connect(m_model.get(), &AssetParameterModel::dataChanged, this, &AssetParameterView::refresh);
+    // Connect rebuildEffect to fully rebuild the view when dynamic params change
+    connect(m_model.get(), &AssetParameterModel::rebuildEffect, this, [this, model, frameSize, addSpacer]() {
+        if (m_isRebuilding) return;
+        m_isRebuilding = true;
+        unsetModel();
+        setModel(model, frameSize, addSpacer);
+        // Re-apply hideKeyframes after rebuild (new KeyframeContainer starts with keyframes visible).
+        // Check actual user state from MLT filter first, fall back to XML default.
+        if (m_mainKeyframeWidget && model->rowCount() > 0) {
+            Mlt::Properties *asset = model->getAsset();
+            bool hideKf = false;
+            if (asset && asset->property_exists("kdenlive:kfrhidden")) {
+                // User explicitly set the state — respect it
+                hideKf = asset->get_int("kdenlive:kfrhidden") == 1;
+            } else {
+                // No user state — use XML default (hideKeyframes attribute)
+                hideKf = model->data(model->index(0, 0), AssetParameterModel::HideKeyframesFirstRole).toBool();
+            }
+            if (hideKf) {
+                toggleKeyframes(false);
+            }
+        }
+        m_isRebuilding = false;
+    });
     // First pass: find and create the keyframe widget for the first animated parameter
     for (int i = 0; i < model->rowCount(); ++i) {
         QModelIndex index = model->index(i, 0);
@@ -122,7 +146,7 @@ void AssetParameterView::setModel(const std::shared_ptr<AssetParameterModel> &mo
                     setMinimumHeight(contentHeight());
                     Q_EMIT updateHeight();
                 });
-                if (type == ParamType::Curve || type == ParamType::Bezier_spline || type == ParamType::Keywords) {
+                if (type == ParamType::Curve || type == ParamType::Bezier_spline || type == ParamType::Keywords || type == ParamType::ShaderEditor) {
                     m_lay->insertRow(nonKeyframeRow, w);
                     nonKeyframeRow++;
                 } else if (type != ParamType::Hidden) {
@@ -234,6 +258,7 @@ void AssetParameterView::unsetModel()
     if (m_model) {
         // if a model is already there, we have to disconnect signals first
         disconnect(m_model.get(), &AssetParameterModel::dataChanged, this, &AssetParameterView::refresh);
+        disconnect(m_model.get(), &AssetParameterModel::rebuildEffect, this, nullptr);
     }
     delete m_mainKeyframeWidget;
     m_mainKeyframeWidget = nullptr;

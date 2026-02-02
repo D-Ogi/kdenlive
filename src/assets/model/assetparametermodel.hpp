@@ -52,6 +52,7 @@ enum class ParamType {
     Filterjob,
     Readonly,
     Hidden,
+    ShaderEditor,
     Unknown
 };
 Q_DECLARE_METATYPE(ParamType)
@@ -84,7 +85,7 @@ struct AssetPointInfo
         const QSize profileSize = pCore->getCurrentFrameSize();
         // Default
         defaultValue.setX(convertValue(def.first, profileSize));
-        defaultValue.setX(convertValue(def.second, profileSize));
+        defaultValue.setY(convertValue(def.second, profileSize));
 
         // Min
         minimum.setX(convertValue(min.first, profileSize));
@@ -330,7 +331,8 @@ public:
         ExpressionRole,
         ExpressionActiveRole,
         ExpressionTemplateLinkRole,
-        ExpressionBaseValueRole
+        ExpressionBaseValueRole,
+        GroupRole
     };
 
     /** @brief Returns true if @param type is animated */
@@ -387,6 +389,12 @@ public:
     /** @brief Must be called before using the keyframes of this model */
     void prepareKeyframes(int in = -1, int out = -1);
     void resetAsset(std::unique_ptr<Mlt::Properties> asset);
+    /** @brief Rebuild the parameter model from new XML (e.g. after dynamic param injection).
+     *  Clears all existing params and re-parses from the given XML element. */
+    void rebuildFromXml(const QDomElement &newXml);
+    /** @brief Re-parse shader params from the given shader file path and inject them into the model.
+     *  Called when shader_path changes on placebo.shader effects. */
+    void updateShaderParams(const QString &shaderPath);
     /** @brief Returns true if the effect has more than one keyframe */
     bool hasMoreThanOneKeyframe() const;
     int time_to_frames(const QString &time) const;

@@ -173,6 +173,15 @@ std::shared_ptr<EffectItemModel> EffectItemModel::construct(std::unique_ptr<Mlt:
     bool disable = effect->get_int("disable") == 0;
     std::shared_ptr<EffectItemModel> self(new EffectItemModel(data, std::move(effect), xml, effectId, stack, disable, originalDecimalPoint));
     baseFinishConstruct(self);
+
+    // For placebo.shader effects loaded from project: inject dynamic shader params
+    if (effectId == QLatin1String("placebo.shader")) {
+        const QString shaderPath = self->getParam(QStringLiteral("shader_path"));
+        if (!shaderPath.isEmpty()) {
+            self->updateShaderParams(shaderPath);
+        }
+    }
+
     return self;
 }
 

@@ -48,6 +48,9 @@ set(kdenlive_SRCS
   assets/view/widgets/expressionwidget.cpp
   assets/view/widgets/expressioneditordialog.cpp
   assets/view/widgets/jssyntaxhighlighter.cpp
+  assets/view/widgets/glslsyntaxhighlighter.cpp
+  assets/view/widgets/shadereditorwidget.cpp
+  assets/shaderparamparser.cpp
   # curves widget
   assets/view/widgets/curves/abstractcurvewidget.h
   assets/view/widgets/curves/bezier/beziersplineeditor.cpp

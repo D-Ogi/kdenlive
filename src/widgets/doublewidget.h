@@ -31,7 +31,8 @@ public:
      * @param suffix (optional) Suffix to display in spinbox
      * @param parent (optional) Parent Widget */
     explicit DoubleWidget(const QString &name, double value, double min, double max, double factor, double defaultValue, const QString &comment, int id,
-                          const QString &suffix = QString(), int decimals = 0, bool oddOnly = false, bool compact = false, QWidget *parent = nullptr);
+                          const QString &suffix = QString(), int decimals = 0, bool oddOnly = false, bool compact = false, QWidget *parent = nullptr,
+                          bool showReset = false);
     ~DoubleWidget() override;
 
     /** @brief Gets the parameter's value. */

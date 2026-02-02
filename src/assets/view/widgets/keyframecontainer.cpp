@@ -39,10 +39,13 @@
 #include <QClipboard>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QLabel>
 #include <QMenu>
 #include <QPointer>
 #include <QStackedWidget>
@@ -465,7 +468,15 @@ KeyframeContainer::KeyframeContainer(std::shared_ptr<AssetParameterModel> model,
     Q_EMIT updateHeight();
 }
 
-KeyframeContainer::~KeyframeContainer() {}
+KeyframeContainer::~KeyframeContainer()
+{
+    // Clean up QGroupBoxes parented to m_parent (not auto-deleted with this QObject).
+    // QPointer auto-nulls when Qt's parent-child mechanism deletes the widget first.
+    for (auto it = m_paramGroups.begin(); it != m_paramGroups.end(); ++it) {
+        delete it.value(); // QPointer: safe no-op if already null
+    }
+    m_paramGroups.clear();
+}
 
 void KeyframeContainer::disconnectEffectStack()
 {
@@ -862,9 +873,11 @@ void KeyframeContainer::addParameter(const QPersistentModelIndex &index)
         int decimals = m_model->data(index, AssetParameterModel::DecimalsRole).toInt();
         double factor = m_model->data(index, AssetParameterModel::FactorRole).toDouble();
         factor = qFuzzyIsNull(factor) ? 1 : factor;
+        // Show reset button only for grouped (shader) params
+        QString groupCheck = m_model->data(index, AssetParameterModel::GroupRole).toString();
         auto doubleWidget = new DoubleWidget(name, value, min, max, factor, defaultValue, comment, -1, suffix, decimals,
                                              m_model->data(index, AssetParameterModel::OddRole).toBool(),
-                                             m_model->data(index, AssetParameterModel::CompactRole).toBool(), m_parent);
+                                             m_model->data(index, AssetParameterModel::CompactRole).toBool(), m_parent, !groupCheck.isEmpty());
         connect(doubleWidget, &DoubleWidget::valueChanged, this, [this, index](double v) {
             Q_EMIT activateEffect();
             m_keyframes->updateKeyframe(GenTime(getPosition(), pCore->getCurrentFps()), QVariant(v), -1, index);
@@ -882,10 +895,115 @@ void KeyframeContainer::addParameter(const QPersistentModelIndex &index)
     }
     if (paramWidget) {
         m_parameters[index] = paramWidget;
-        if (labelWidget) {
-            m_layout->addRow(labelWidget, paramWidget);
-        } else {
-            m_layout->addRow(paramWidget);
+
+        // Check if this parameter belongs to a group
+        QString groupName = m_model->data(index, AssetParameterModel::GroupRole).toString();
+        QFormLayout *targetLayout = m_layout;
+
+        if (!groupName.isEmpty()) {
+            // Get or create a collapsible QGroupBox for this group
+            // QPointer: also recreate if the previous one was destroyed
+            if (!m_paramGroups.contains(groupName) || m_paramGroups[groupName].isNull()) {
+                auto *groupBox = new QGroupBox(groupName, m_parent);
+                groupBox->setCheckable(true);
+                groupBox->setChecked(true);
+                auto *groupLayout = new QFormLayout(groupBox);
+                groupLayout->setContentsMargins(4, 4, 4, 4);
+                groupLayout->setSpacing(2);
+                m_layout->addRow(groupBox);
+                m_paramGroups[groupName] = groupBox;
+
+                // Toggle visibility of contents when checked/unchecked
+                connect(groupBox, &QGroupBox::toggled, groupBox, [groupBox](bool checked) {
+                    // Show/hide all child widgets except the groupbox title
+                    const auto children = groupBox->findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly);
+                    for (auto *child : children) {
+                        child->setVisible(checked);
+                    }
+                    // Force layout recalculation so the container shrinks
+                    groupBox->updateGeometry();
+                    if (groupBox->parentWidget()) {
+                        groupBox->parentWidget()->updateGeometry();
+                    }
+                });
+            }
+            targetLayout = qobject_cast<QFormLayout *>(m_paramGroups[groupName]->layout());
+        }
+
+        if (targetLayout) {
+            if (labelWidget && !groupName.isEmpty()) {
+                // For grouped (shader) params: wrap label + fx button in a container
+                auto *labelContainer = new QWidget(m_parent);
+                auto *labelLayout = new QHBoxLayout(labelContainer);
+                labelLayout->setContentsMargins(0, 0, 0, 0);
+                labelLayout->setSpacing(2);
+                labelLayout->addWidget(labelWidget);
+
+                // "fx" toggle button → opens expression editor as popup
+                auto *fxButton = new QToolButton(labelContainer);
+                fxButton->setText(QStringLiteral("fx"));
+                fxButton->setToolTip(i18n("Expression editor"));
+                fxButton->setAutoRaise(true);
+                fxButton->setFixedSize(20, 20);
+                QFont fxFont = fxButton->font();
+                fxFont.setBold(true);
+                fxFont.setPointSize(7);
+                fxButton->setFont(fxFont);
+                labelLayout->addWidget(fxButton);
+                labelLayout->addStretch();
+
+                targetLayout->addRow(labelContainer, paramWidget);
+
+                // Expression popup: opens ExpressionWidget in a floating window
+                // Use QPointer to guard against stale model during rebuild
+                QString paramNameStr = m_model->data(index, AssetParameterModel::NameRole).toString();
+                QString displayNameStr = m_model->data(index, Qt::DisplayRole).toString();
+                QPointer<AssetParameterModel> modelGuard = m_model.get();
+                auto model = m_model;
+                connect(fxButton, &QToolButton::clicked, this, [model, modelGuard, paramNameStr, displayNameStr, fxButton]() {
+                    if (!modelGuard) {
+                        return; // Model was destroyed during rebuild
+                    }
+                    auto *popup = new QWidget(fxButton, Qt::Popup | Qt::FramelessWindowHint);
+                    popup->setAttribute(Qt::WA_DeleteOnClose);
+                    popup->setMinimumWidth(380);
+                    auto *popupLayout = new QVBoxLayout(popup);
+                    popupLayout->setContentsMargins(6, 6, 6, 6);
+
+                    auto *titleLabel = new QLabel(QStringLiteral("<b>%1</b> — Expression").arg(displayNameStr), popup);
+                    popupLayout->addWidget(titleLabel);
+
+                    auto *exprWidget = new ExpressionWidget(model, paramNameStr, popup);
+                    popupLayout->addWidget(exprWidget);
+
+                    // Update fx button highlight when expression changes
+                    QPointer<QToolButton> fxGuard = fxButton;
+                    connect(exprWidget, &ExpressionWidget::expressionChanged, fxButton, [fxGuard](const QString &expr) {
+                        if (!fxGuard) return;
+                        if (expr.isEmpty()) {
+                            fxGuard->setStyleSheet(QString());
+                        } else {
+                            fxGuard->setStyleSheet(QStringLiteral("QToolButton { color: #ff6600; font-weight: bold; }"));
+                        }
+                    });
+
+                    // Position popup below the fx button
+                    QPoint pos = fxButton->mapToGlobal(QPoint(0, fxButton->height()));
+                    popup->move(pos);
+                    popup->show();
+                    popup->setFocus();
+                });
+
+                // Highlight fx button if expression already exists
+                QString existingExpr = m_model->data(index, AssetParameterModel::ExpressionRole).toString();
+                if (!existingExpr.isEmpty()) {
+                    fxButton->setStyleSheet(QStringLiteral("QToolButton { color: #ff6600; font-weight: bold; }"));
+                }
+            } else if (labelWidget) {
+                targetLayout->addRow(labelWidget, paramWidget);
+            } else {
+                targetLayout->addRow(paramWidget);
+            }
         }
         m_addedHeight += paramWidget->minimumHeight() + m_layout->horizontalSpacing();
         m_fixedHeight = m_baseHeight + m_addedHeight;

@@ -77,6 +77,8 @@ protected:
     std::shared_ptr<AssetParameterModel> m_model;
     std::vector<AbstractParamWidget *> m_widgets;
     KeyframeContainer *m_mainKeyframeWidget{nullptr};
+    /** @brief Guard against recursive rebuildEffect → setModel → rebuildEffect */
+    bool m_isRebuilding{false};
     QMenu *m_presetMenu;
     std::shared_ptr<QActionGroup> m_presetGroup;
 

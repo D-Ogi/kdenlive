@@ -9,7 +9,9 @@
 #include "abstractparamwidget.hpp"
 #include "curves/keyframe/keyframecurveeditor.h"
 #include "definitions.h"
+#include <QMap>
 #include <QPersistentModelIndex>
+#include <QPointer>
 #include <memory>
 #include <unordered_map>
 
@@ -21,6 +23,7 @@ class KeyframeModelList;
 class QVBoxLayout;
 class QToolButton;
 class QToolBar;
+class QGroupBox;
 class TimecodeDisplay;
 class KSelectAction;
 class ExpressionWidget;
@@ -134,6 +137,7 @@ private:
     int m_baseHeight;
     int m_addedHeight;
     QFormLayout *m_layout;
+    QMap<QString, QPointer<QGroupBox>> m_paramGroups; ///< Collapsible groups for shader params
     std::unique_ptr<GeometryWidget> m_geom;
     int m_curveContainerHeight{0};
     int m_fixedHeight{0};
