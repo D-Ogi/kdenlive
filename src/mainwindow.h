@@ -382,6 +382,10 @@ public Q_SLOTS:
     Q_SCRIPTABLE int scriptGetProjectResolutionHeight();
     Q_SCRIPTABLE QString scriptGetProjectProperty(const QString &key);
     Q_SCRIPTABLE bool scriptSetProjectProperty(const QString &key, const QString &value);
+    Q_SCRIPTABLE int scriptGetProjectDuration();
+    Q_SCRIPTABLE QString scriptGetProjectColorSpace();
+    Q_SCRIPTABLE bool scriptSetProjectColorSpace(const QString &colorSpace);
+    Q_SCRIPTABLE int scriptGetProjectAudioSampleRate();
 
     // Media Pool (Bin)
     Q_SCRIPTABLE QStringList scriptImportMedia(const QStringList &filePaths, const QString &folderId = QStringLiteral("-1"));
@@ -394,12 +398,18 @@ public Q_SLOTS:
                                                const QString &parentFolderId = QStringLiteral("-1"));
     Q_SCRIPTABLE QString scriptGetTitleXml(const QString &binId);
     Q_SCRIPTABLE bool scriptSetTitleXml(const QString &binId, const QString &newXml);
+    Q_SCRIPTABLE bool scriptRenameBinClip(const QString &binId, const QString &newName);
+    Q_SCRIPTABLE bool scriptMoveBinClip(const QString &binId, const QString &targetFolderId);
+    Q_SCRIPTABLE QVariantMap scriptGetClipMetadata(const QString &binId);
 
     // Timeline
     Q_SCRIPTABLE int scriptGetTrackCount(const QString &trackType);
     Q_SCRIPTABLE QVariantMap scriptGetTrackInfo(int trackIndex);
     Q_SCRIPTABLE QVariantList scriptGetAllTracksInfo();
     Q_SCRIPTABLE int scriptAddTrack(const QString &name, bool audioTrack);
+    Q_SCRIPTABLE bool scriptDeleteTrack(int trackId);
+    Q_SCRIPTABLE bool scriptInsertSpace(int trackId, int position, int duration, bool allTracks);
+    Q_SCRIPTABLE bool scriptRemoveSpace(int trackId, int position, bool allTracks);
     Q_SCRIPTABLE int scriptInsertClip(const QString &binClipId, int trackId, int position);
     Q_SCRIPTABLE QVariantList scriptInsertClipsSequentially(const QStringList &binClipIds, int trackId, int startPosition);
     Q_SCRIPTABLE bool scriptMoveClip(int clipId, int trackId, int position);
@@ -410,10 +420,19 @@ public Q_SLOTS:
     Q_SCRIPTABLE bool scriptSlipClip(int clipId, int offset);
     Q_SCRIPTABLE bool scriptCutClip(int clipId, int position);
 
+    // Ripple/Roll/Slide Editing
+    Q_SCRIPTABLE bool scriptRippleDelete(int clipId);
+    Q_SCRIPTABLE bool scriptRippleTrim(int clipId, int delta, bool fromRight);
+    Q_SCRIPTABLE bool scriptRollEdit(int clipId, int delta);
+    Q_SCRIPTABLE bool scriptSlideEdit(int clipId, int delta);
+
     // Transitions & Mixes
     Q_SCRIPTABLE bool scriptAddMix(int clipIdA, int clipIdB, int durationFrames);
     Q_SCRIPTABLE int scriptAddComposition(const QString &transitionId, int trackId, int position, int duration);
     Q_SCRIPTABLE bool scriptRemoveMix(int clipId);
+    Q_SCRIPTABLE QVariantList scriptGetAvailableTransitions();
+    Q_SCRIPTABLE QVariantMap scriptGetMixParams(int clipId);
+    Q_SCRIPTABLE bool scriptSetMixDuration(int clipId, int newDuration);
 
     // Compositions
     Q_SCRIPTABLE QVariantList scriptGetCompositions();
@@ -422,11 +441,20 @@ public Q_SLOTS:
     Q_SCRIPTABLE int scriptResizeComposition(int compoId, int newDuration, bool fromRight);
     Q_SCRIPTABLE bool scriptDeleteComposition(int compoId);
     Q_SCRIPTABLE QVariantList scriptGetCompositionTypes();
+    Q_SCRIPTABLE bool scriptSetCompositionParam(int compoId, const QString &paramName, const QString &paramValue);
+    Q_SCRIPTABLE QString scriptGetCompositionParam(int compoId, const QString &paramName);
 
     // Effects
+    Q_SCRIPTABLE QVariantList scriptGetAvailableEffects();
     Q_SCRIPTABLE bool scriptAddClipEffect(int clipId, const QString &effectId, const QStringList &paramKeys, const QStringList &paramValues);
     Q_SCRIPTABLE bool scriptRemoveClipEffect(int clipId, const QString &effectId);
     Q_SCRIPTABLE QString scriptGetClipEffects(int clipId);
+    Q_SCRIPTABLE bool scriptSetEffectParam(int clipId, const QString &effectId, const QString &paramName, const QString &paramValue);
+    Q_SCRIPTABLE QString scriptGetEffectParam(int clipId, const QString &effectId, const QString &paramName);
+    Q_SCRIPTABLE bool scriptSetEffectExpression(int clipId, const QString &effectId, const QString &paramName, const QString &expression, double baseValue);
+    Q_SCRIPTABLE bool scriptClearEffectExpression(int clipId, const QString &effectId, const QString &paramName);
+    Q_SCRIPTABLE QString scriptCopyClipEffects(int clipId);
+    Q_SCRIPTABLE bool scriptPasteClipEffects(int targetClipId, const QString &effectsXml);
 
     // Speed
     Q_SCRIPTABLE bool scriptSetClipSpeed(int clipId, double speed, bool pitchCompensate);
@@ -437,15 +465,54 @@ public Q_SLOTS:
     Q_SCRIPTABLE bool scriptRemoveEffectKeyframe(int clipId, int effectIndex, int frame);
     Q_SCRIPTABLE bool scriptUpdateEffectKeyframe(int clipId, int effectIndex, int oldFrame, int newFrame, double normalizedValue);
 
+    // Effect keyframes by parameter name
+    Q_SCRIPTABLE QVariantList scriptGetEffectKeyframesByParam(int clipId, const QString &effectId, const QString &paramName);
+    Q_SCRIPTABLE bool scriptAddEffectKeyframeByParam(int clipId, const QString &effectId, const QString &paramName,
+                                                      int frame, const QString &value, int keyframeType);
+    Q_SCRIPTABLE bool scriptRemoveEffectKeyframeByParam(int clipId, const QString &effectId, const QString &paramName, int frame);
+
+    // Time Remap (speed ramping)
+    Q_SCRIPTABLE bool scriptEnableTimeRemap(int clipId, bool enable);
+    Q_SCRIPTABLE QVariantMap scriptGetTimeRemap(int clipId);
+    Q_SCRIPTABLE bool scriptSetTimeRemap(int clipId, const QString &timeMap, int pitch, const QString &imageMode);
+
     // Speed
     Q_SCRIPTABLE bool scriptSetClipSpeed(int clipId, double speed, bool pitchCompensate);
 
+    // Clip Transform Keyframes
+    Q_SCRIPTABLE QVariantList scriptGetClipTransformKeyframes(int clipId);
+    Q_SCRIPTABLE bool scriptSetClipTransform(int clipId, int frame, int x, int y, int width, int height, double opacity);
+    Q_SCRIPTABLE bool scriptRemoveClipTransformKeyframe(int clipId, int frame);
+
+    // Clip Properties
+    Q_SCRIPTABLE double scriptGetClipOpacity(int clipId);
+    Q_SCRIPTABLE bool scriptSetClipOpacity(int clipId, double opacity);
+    Q_SCRIPTABLE bool scriptIsClipEnabled(int clipId);
+    Q_SCRIPTABLE bool scriptSetClipEnabled(int clipId, bool enabled);
+    Q_SCRIPTABLE QString scriptGetClipColor(int clipId);
+    Q_SCRIPTABLE bool scriptSetClipColor(int clipId, const QString &colorTag);
+
+    // Track Properties
+    Q_SCRIPTABLE QString scriptGetTrackName(int trackId);
+    Q_SCRIPTABLE bool scriptSetTrackName(int trackId, const QString &name);
+    Q_SCRIPTABLE int scriptGetTrackColor(int trackId);
+    Q_SCRIPTABLE bool scriptSetTrackColor(int trackId, int color);
+    Q_SCRIPTABLE bool scriptGetTrackSolo(int trackId);
+    Q_SCRIPTABLE bool scriptSetTrackSolo(int trackId, bool solo);
+
     // Audio
+    Q_SCRIPTABLE bool scriptSplitAudio(int clipId);
     Q_SCRIPTABLE bool scriptSetClipVolume(int clipId, double dB);
     Q_SCRIPTABLE double scriptGetClipVolume(int clipId);
     Q_SCRIPTABLE bool scriptSetAudioFade(int clipId, int fadeInFrames, int fadeOutFrames);
+    Q_SCRIPTABLE bool scriptSetClipPan(int clipId, double pan);
+    Q_SCRIPTABLE double scriptGetClipPan(int clipId);
     Q_SCRIPTABLE bool scriptSetTrackMute(int trackId, bool mute);
     Q_SCRIPTABLE bool scriptGetTrackMute(int trackId);
+    Q_SCRIPTABLE bool scriptSetTrackLocked(int trackId, bool locked);
+    Q_SCRIPTABLE bool scriptGetTrackLocked(int trackId);
+    Q_SCRIPTABLE bool scriptSetTrackHidden(int trackId, bool hidden);
+    Q_SCRIPTABLE bool scriptGetTrackHidden(int trackId);
     Q_SCRIPTABLE QVariantList scriptGetAudioLevels(const QString &binId, int stream, int downsample, int mode = 0);
 
     // Markers & Guides
@@ -460,16 +527,42 @@ public Q_SLOTS:
     Q_SCRIPTABLE bool scriptDeleteClipMarker(const QString &binId, int frame);
     Q_SCRIPTABLE bool scriptDeleteClipMarkersByCategory(const QString &binId, int category);
 
+    // Render with parameters
+    Q_SCRIPTABLE bool scriptRenderWithParams(const QString &outputFile, const QString &presetName,
+                                              int inFrame, int outFrame,
+                                              const QStringList &paramKeys, const QStringList &paramValues);
+    Q_SCRIPTABLE QStringList scriptGetRenderPresets();
+    Q_SCRIPTABLE QVariantList scriptGetRenderJobs();
+    Q_SCRIPTABLE bool scriptAbortRenderJob(const QString &outputPath);
+
+    // Project Profile
+    Q_SCRIPTABLE bool scriptSetProjectProfile(int width, int height, int fpsNum, int fpsDen);
+
+    // Copy/Cut/Paste
+    Q_SCRIPTABLE int scriptCopyClips();
+    Q_SCRIPTABLE bool scriptCutClips();
+    Q_SCRIPTABLE bool scriptPasteClips(int position, int trackId);
+
     // Playback & Monitor
     Q_SCRIPTABLE void scriptSeek(int frame);
     Q_SCRIPTABLE int scriptGetPosition();
     Q_SCRIPTABLE void scriptPlay();
     Q_SCRIPTABLE void scriptPause();
+    Q_SCRIPTABLE bool scriptSetPlaybackSpeed(double speed);
+    Q_SCRIPTABLE double scriptGetPlaybackSpeed();
+
+    // Timeline Navigation
+    Q_SCRIPTABLE int scriptGoToNextMarker();
+    Q_SCRIPTABLE int scriptGoToPreviousMarker();
+    Q_SCRIPTABLE int scriptGoToNextEdit();
+    Q_SCRIPTABLE int scriptGoToPreviousEdit();
 
     // Additional
     Q_SCRIPTABLE QVariantList scriptDetectScenes(const QString &binClipId, double threshold = 0.4, int minDuration = 0);
 
     // Sequences (multi-timeline)
+    Q_SCRIPTABLE QString scriptCreateSequence(const QString &name, int audioTracks, int videoTracks,
+                                               const QString &parentFolder = QStringLiteral("-1"));
     Q_SCRIPTABLE QVariantList scriptGetSequences();
     Q_SCRIPTABLE QVariantMap scriptGetActiveSequence();
     Q_SCRIPTABLE bool scriptSetActiveSequence(const QString &uuid);
@@ -487,13 +580,21 @@ public Q_SLOTS:
     // Preview / Frame Rendering
     Q_SCRIPTABLE QString scriptRenderBinFrame(const QString &binId, int frame, int width, int height, const QString &outputPath);
     Q_SCRIPTABLE QString scriptRenderTimelineFrame(int frame, int width, int height, const QString &outputPath);
+    Q_SCRIPTABLE QString scriptCaptureWindow(int maxSize, const QString &outputPath);
+    Q_SCRIPTABLE QString scriptGetPanelGeometries();
 
     // Subtitles
     Q_SCRIPTABLE QVariantList scriptGetSubtitles();
     Q_SCRIPTABLE int scriptAddSubtitle(int startFrame, int endFrame, const QString &text, int layer = 0);
     Q_SCRIPTABLE bool scriptEditSubtitle(int subtitleId, const QString &newText);
+    Q_SCRIPTABLE bool scriptMoveSubtitle(int subtitleId, int newStartFrame);
+    Q_SCRIPTABLE bool scriptResizeSubtitle(int subtitleId, int newDuration, bool fromRight);
+    Q_SCRIPTABLE bool scriptImportSubtitle(const QString &filePath, int offset, const QString &encoding);
     Q_SCRIPTABLE bool scriptDeleteSubtitle(int subtitleId);
     Q_SCRIPTABLE bool scriptExportSubtitles(const QString &filePath);
+
+    // Speech Recognition
+    Q_SCRIPTABLE bool scriptSpeechRecognition();
 
     // Subtitle Styles
     Q_SCRIPTABLE QVariantList scriptGetSubtitleStyles(bool global);
@@ -611,6 +712,8 @@ public Q_SLOTS:
     KIO::filesize_t fetchFolderSize(const QString path);
 
 private Q_SLOTS:
+    /** @brief Import an After Effects .aep preset as an effect template */
+    void slotImportAepPreset();
     /** @brief Shows the shortcut dialog. */
     void slotEditKeys();
     void slotEditToolbars();

@@ -493,6 +493,8 @@ void AutomaskHelper::updateMaskParams()
     if (m_samProcess.state() == QProcess::Running) {
         m_jobStatus = QProcess::Running;
         m_samProcess.write(samCommand.toUtf8());
+        // Re-render preview with updated visual params
+        generateImage();
     }
 }
 

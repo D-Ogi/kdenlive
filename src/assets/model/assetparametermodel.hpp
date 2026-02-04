@@ -395,6 +395,8 @@ public:
     /** @brief Re-parse shader params from the given shader file path and inject them into the model.
      *  Called when shader_path changes on placebo.shader effects. */
     void updateShaderParams(const QString &shaderPath);
+    /** @brief Re-parse shader params from shader source text and rebuild the model. */
+    void updateShaderParamsFromText(const QString &shaderText);
     /** @brief Returns true if the effect has more than one keyframe */
     bool hasMoreThanOneKeyframe() const;
     int time_to_frames(const QString &time) const;
@@ -520,6 +522,9 @@ protected:
     int m_activeKeyframe;
     /** @brief if true, keyframe tools will be hidden by default */
     bool m_hideKeyframesByDefault;
+    /** @brief Full shader text (with //!PARAM) pending rebuild in prepareKeyframes */
+    QString m_pendingShaderText;
+    QString m_pendingShaderPath;
     /** @brief if true, the effect's in/out will always be synced to clip in/out */
     bool m_requiresInOut;
     /** @brief true if this is an audio effect, used to prevent unnecessary monitor refresh / timeline invalidate */

@@ -66,7 +66,7 @@ void EffectsRepository::parseCustomAssetFile(const QString &file_name, std::unor
     QDomElement base = doc.documentElement();
     if (base.tagName() == QLatin1String("effectgroup")) {
         QDomNodeList effects = base.elementsByTagName(QStringLiteral("effect"));
-        if (effects.count() > 1) {
+        if (effects.count() >= 1) {
             // Effect group
             Info result;
             result.xml = base;
@@ -108,6 +108,7 @@ void EffectsRepository::parseCustomAssetFile(const QString &file_name, std::unor
                 if (currentId.isEmpty()) {
                     currentId = currentEffect.attribute(QStringLiteral("tag"), QString());
                 }
+                qWarning() << "AEP DEBUG: checking effect" << currentId << "exists=" << exists(currentId);
                 if (!exists(currentId) && customAssets.count(currentId) == 0) {
                     qWarning() << "unsupported effect in group" << currentId << ":" << file_name;
                     return;
@@ -278,15 +279,16 @@ bool EffectsRepository::hasInternalEffect(const QString &effectId) const
 QString EffectsRepository::getCustomPath(const QString &id)
 {
     QString customAssetDir = QStandardPaths::locate(QStandardPaths::AppDataLocation, QStringLiteral("effects"), QStandardPaths::LocateDirectory);
-    QPair<QStringList, QStringList> results;
     QDir current_dir(customAssetDir);
     return current_dir.absoluteFilePath(QStringLiteral("%1.xml").arg(id));
 }
 
 QPair<QString, QString> EffectsRepository::reloadCustom(const QString &path)
 {
+    qWarning() << "AEP DEBUG: reloadCustom called with path" << path;
     std::unordered_map<QString, Info> customAssets;
     parseCustomAssetFile(path, customAssets);
+    qWarning() << "AEP DEBUG: parseCustomAssetFile returned" << customAssets.size() << "assets";
     QPair<QString, QString> result;
     // TODO: handle files with several effects
     for (const auto &custom : customAssets) {

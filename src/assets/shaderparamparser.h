@@ -52,6 +52,15 @@ public:
     static QVector<ShaderParamInfo> parseFile(const QString &filePath);
 
     /**
+     * @brief Strip all //!PARAM blocks from shader text.
+     *
+     * Removes //!PARAM lines and their associated directives (//!DESC, //!TYPE,
+     * //!MINIMUM, //!MAXIMUM) plus the bare default-value line, so the result
+     * is valid for libplacebo which does not understand //!PARAM.
+     */
+    static QString strip(const QString &shaderText);
+
+    /**
      * @brief Convert a ShaderParamInfo into a <parameter> QDomElement
      *        suitable for injection into an effect XML document.
      *

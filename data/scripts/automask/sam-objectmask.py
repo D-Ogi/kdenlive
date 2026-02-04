@@ -188,11 +188,21 @@ def generate_preview():
             scaled_box = (scaled_box * preview_scale).astype(np.float32)
 
     predictor.set_image(image)
+    # Debug: log point count and coordinate range to stderr
+    if scaled_points is not None:
+        print(f"DEBUG predict: {len(scaled_points)} points, "
+              f"x=[{scaled_points[:,0].min()}-{scaled_points[:,0].max()}], "
+              f"y=[{scaled_points[:,1].min()}-{scaled_points[:,1].max()}], "
+              f"image={image.shape[1]}x{image.shape[0]}",
+              file=sys.stderr, flush=True)
+    # Use multimask_output=True to let SAM2 explore multiple segmentations.
+    # With many brush points, the single-mask mode can produce fragmented results.
+    # We pick the mask with the highest confidence score.
     masks, scores, logits = predictor.predict(
         point_coords=None if scaled_points is None else scaled_points,
         point_labels=None if not labels else labels[preview_frame],
         box=None if scaled_box is None else scaled_box,
-        multimask_output=False)
+        multimask_output=True)
 
     if len(masks) == 0:
         # No object detected — output blank transparent mask
@@ -201,7 +211,12 @@ def generate_preview():
             w, h = orig_size[0], orig_size[1]
         mask = np.zeros((h, w), dtype=bool)
     else:
-        mask = masks[0]
+        # Pick the mask with the highest confidence score
+        best_idx = int(np.argmax(scores))
+        mask = masks[best_idx]
+        print(f"DEBUG mask: picked {best_idx}/{len(masks)}, score={scores[best_idx]:.3f}, "
+              f"coverage={mask.sum()}/{mask.size} ({100*mask.sum()/mask.size:.1f}%)",
+              file=sys.stderr, flush=True)
     # Upscale mask back to original resolution if downscaled
     if preview_scale < 1.0 and preview_scale > 0:
         import cv2

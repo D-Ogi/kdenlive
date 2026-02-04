@@ -181,3 +181,64 @@ QDomElement ShaderParamParser::toParameterElement(QDomDocument &doc, const Shade
 
     return el;
 }
+
+QString ShaderParamParser::strip(const QString &shaderText)
+{
+    const QStringList lines = shaderText.split(QLatin1Char('\n'));
+    QStringList result;
+    int i = 0;
+    while (i < lines.size()) {
+        const QString trimmed = lines[i].trimmed();
+        if (!trimmed.startsWith(QLatin1String("//!PARAM "))) {
+            result.append(lines[i]);
+            ++i;
+            continue;
+        }
+        // Skip the //!PARAM line
+        ++i;
+        // Skip associated directives, empty lines, and the default-value line
+        while (i < lines.size()) {
+            const QString line = lines[i].trimmed();
+            if (line.isEmpty()) {
+                ++i;
+                continue;
+            }
+            if (line.startsWith(QLatin1String("//!DESC ")) ||
+                line.startsWith(QLatin1String("//!TYPE ")) ||
+                line.startsWith(QLatin1String("//!MINIMUM ")) ||
+                line.startsWith(QLatin1String("//!MAXIMUM ")) ||
+                (line.startsWith(QLatin1String("//!")) && !line.startsWith(QLatin1String("//!HOOK")) &&
+                 !line.startsWith(QLatin1String("//!BIND")) && !line.startsWith(QLatin1String("//!SAVE")) &&
+                 !line.startsWith(QLatin1String("//!WHEN")) && !line.startsWith(QLatin1String("//!COMPUTE")))) {
+                ++i;
+            } else {
+                // First non-directive line = default value, skip it too
+                bool ok;
+                line.toDouble(&ok);
+                if (ok) {
+                    ++i;
+                }
+                break;
+            }
+        }
+    }
+    // Collapse runs of consecutive empty lines into a single empty line
+    QStringList collapsed;
+    bool lastWasEmpty = false;
+    for (const QString &line : std::as_const(result)) {
+        if (line.trimmed().isEmpty()) {
+            if (!lastWasEmpty) {
+                collapsed.append(line);
+            }
+            lastWasEmpty = true;
+        } else {
+            collapsed.append(line);
+            lastWasEmpty = false;
+        }
+    }
+    // Remove leading empty lines
+    while (!collapsed.isEmpty() && collapsed.first().trimmed().isEmpty()) {
+        collapsed.removeFirst();
+    }
+    return collapsed.join(QLatin1Char('\n'));
+}

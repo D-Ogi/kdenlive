@@ -562,10 +562,34 @@ bool EffectStackModel::fromXml(const QDomElement &effectsXml, Fun &undo, Fun &re
                     effect->setExpressionBaseValue(pName, baseValStr.toDouble());
                 }
                 effect->setExpression(pName, expr);
+                // For dynamic params (e.g. shader_param.*) that don't exist in m_params yet:
+                // setExpressionBaseValue/setExpression return early, but we still need to
+                // persist to MLT so restoreExpressionsFromFilter() can recover them later.
+                auto asset = effect->getAsset();
+                if (asset) {
+                    QString exprProp = QStringLiteral("kdenlive:expr.%1").arg(pName);
+                    if (!asset->property_exists(exprProp.toUtf8().constData())) {
+                        asset->set(exprProp.toUtf8().constData(), expr.toUtf8().constData());
+                    }
+                    if (!baseValStr.isEmpty()) {
+                        QString baseProp = QStringLiteral("kdenlive:exprbase.%1").arg(pName);
+                        if (!asset->property_exists(baseProp.toUtf8().constData())) {
+                            asset->set(baseProp.toUtf8().constData(), baseValStr.toUtf8().constData());
+                        }
+                    }
+                }
             }
             const QString tmplId = pnode.attribute(QStringLiteral("expressiontemplate"));
             if (!tmplId.isEmpty()) {
                 effect->setExpressionTemplateLink(pName, tmplId);
+                // Same fallback for dynamic params
+                auto asset = effect->getAsset();
+                if (asset) {
+                    QString tmplProp = QStringLiteral("kdenlive:exprtmpl.%1").arg(pName);
+                    if (!asset->property_exists(tmplProp.toUtf8().constData())) {
+                        asset->set(tmplProp.toUtf8().constData(), tmplId.toUtf8().constData());
+                    }
+                }
             }
         }
         Fun local_undo = removeItem_lambda(effect->getId());

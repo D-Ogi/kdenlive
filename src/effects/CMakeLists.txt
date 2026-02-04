@@ -3,6 +3,8 @@
 
 set(kdenlive_SRCS
   ${kdenlive_SRCS}
+  effects/aepparser.cpp
+  effects/aepmapper.cpp
   effects/effectbasket.cpp
   effects/effectlist/model/effectfilter.cpp
   effects/effectlist/model/effecttreemodel.cpp

@@ -63,6 +63,19 @@
       <arg name="value" type="s" direction="in"/>
       <arg name="success" type="b" direction="out"/>
     </method>
+    <method name="scriptGetProjectDuration">
+      <arg name="duration" type="i" direction="out"/>
+    </method>
+    <method name="scriptGetProjectColorSpace">
+      <arg name="colorSpace" type="s" direction="out"/>
+    </method>
+    <method name="scriptSetProjectColorSpace">
+      <arg name="colorSpace" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetProjectAudioSampleRate">
+      <arg name="sampleRate" type="i" direction="out"/>
+    </method>
 
     <!-- Media Pool (Bin) -->
     <method name="scriptImportMedia">
@@ -107,6 +120,21 @@
       <arg name="newXml" type="s" direction="in"/>
       <arg name="success" type="b" direction="out"/>
     </method>
+    <method name="scriptRenameBinClip">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="newName" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptMoveBinClip">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="targetFolderId" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetClipMetadata">
+      <arg name="binId" type="s" direction="in"/>
+      <arg name="metadata" type="a{sv}" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantMap"/>
+    </method>
 
     <!-- Timeline -->
     <method name="scriptGetTrackCount">
@@ -126,6 +154,23 @@
       <arg name="name" type="s" direction="in"/>
       <arg name="audioTrack" type="b" direction="in"/>
       <arg name="trackId" type="i" direction="out"/>
+    </method>
+    <method name="scriptDeleteTrack">
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptInsertSpace">
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="position" type="i" direction="in"/>
+      <arg name="duration" type="i" direction="in"/>
+      <arg name="allTracks" type="b" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptRemoveSpace">
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="position" type="i" direction="in"/>
+      <arg name="allTracks" type="b" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
     </method>
     <method name="scriptInsertClip">
       <arg name="binClipId" type="s" direction="in"/>
@@ -172,6 +217,28 @@
       <arg name="success" type="b" direction="out"/>
     </method>
 
+    <!-- Ripple/Roll/Slide Editing -->
+    <method name="scriptRippleDelete">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptRippleTrim">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="delta" type="i" direction="in"/>
+      <arg name="fromRight" type="b" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptRollEdit">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="delta" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptSlideEdit">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="delta" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
     <!-- Transitions -->
     <method name="scriptAddMix">
       <arg name="clipIdA" type="i" direction="in"/>
@@ -188,6 +255,20 @@
     </method>
     <method name="scriptRemoveMix">
       <arg name="clipId" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetAvailableTransitions">
+      <arg name="transitions" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
+    </method>
+    <method name="scriptGetMixParams">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="params" type="a{sv}" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantMap"/>
+    </method>
+    <method name="scriptSetMixDuration">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="newDuration" type="i" direction="in"/>
       <arg name="success" type="b" direction="out"/>
     </method>
 
@@ -221,8 +302,23 @@
       <arg name="types" type="av" direction="out"/>
       <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
     </method>
+    <method name="scriptSetCompositionParam">
+      <arg name="compoId" type="i" direction="in"/>
+      <arg name="paramName" type="s" direction="in"/>
+      <arg name="paramValue" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetCompositionParam">
+      <arg name="compoId" type="i" direction="in"/>
+      <arg name="paramName" type="s" direction="in"/>
+      <arg name="paramValue" type="s" direction="out"/>
+    </method>
 
     <!-- Effects -->
+    <method name="scriptGetAvailableEffects">
+      <arg name="effects" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
+    </method>
     <method name="scriptAddClipEffect">
       <arg name="clipId" type="i" direction="in"/>
       <arg name="effectId" type="s" direction="in"/>
@@ -239,12 +335,124 @@
       <arg name="clipId" type="i" direction="in"/>
       <arg name="effects" type="s" direction="out"/>
     </method>
+    <method name="scriptSetEffectParam">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="effectId" type="s" direction="in"/>
+      <arg name="paramName" type="s" direction="in"/>
+      <arg name="paramValue" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetEffectParam">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="effectId" type="s" direction="in"/>
+      <arg name="paramName" type="s" direction="in"/>
+      <arg name="value" type="s" direction="out"/>
+    </method>
+    <method name="scriptSetEffectExpression">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="effectId" type="s" direction="in"/>
+      <arg name="paramName" type="s" direction="in"/>
+      <arg name="expression" type="s" direction="in"/>
+      <arg name="baseValue" type="d" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptClearEffectExpression">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="effectId" type="s" direction="in"/>
+      <arg name="paramName" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <method name="scriptCopyClipEffects">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="effectsXml" type="s" direction="out"/>
+    </method>
+    <method name="scriptPasteClipEffects">
+      <arg name="targetClipId" type="i" direction="in"/>
+      <arg name="effectsXml" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Time Remap (speed ramping) -->
+    <method name="scriptEnableTimeRemap">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="enable" type="b" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetTimeRemap">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="info" type="a{sv}" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantMap"/>
+    </method>
+    <method name="scriptSetTimeRemap">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="timeMap" type="s" direction="in"/>
+      <arg name="pitch" type="i" direction="in"/>
+      <arg name="imageMode" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
 
     <!-- Speed -->
     <method name="scriptSetClipSpeed">
       <arg name="clipId" type="i" direction="in"/>
       <arg name="speed" type="d" direction="in"/>
       <arg name="pitchCompensate" type="b" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Clip Transform Keyframes -->
+    <method name="scriptGetClipTransformKeyframes">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="keyframes" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
+    </method>
+    <method name="scriptSetClipTransform">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="frame" type="i" direction="in"/>
+      <arg name="x" type="i" direction="in"/>
+      <arg name="y" type="i" direction="in"/>
+      <arg name="width" type="i" direction="in"/>
+      <arg name="height" type="i" direction="in"/>
+      <arg name="opacity" type="d" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptRemoveClipTransformKeyframe">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="frame" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Clip Properties -->
+    <method name="scriptGetClipOpacity">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="opacity" type="d" direction="out"/>
+    </method>
+    <method name="scriptSetClipOpacity">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="opacity" type="d" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptIsClipEnabled">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="enabled" type="b" direction="out"/>
+    </method>
+    <method name="scriptSetClipEnabled">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="enabled" type="b" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetClipColor">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="color" type="s" direction="out"/>
+    </method>
+    <method name="scriptSetClipColor">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="colorTag" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <method name="scriptSplitAudio">
+      <arg name="clipId" type="i" direction="in"/>
       <arg name="success" type="b" direction="out"/>
     </method>
 
@@ -264,6 +472,15 @@
       <arg name="fadeOutFrames" type="i" direction="in"/>
       <arg name="success" type="b" direction="out"/>
     </method>
+    <method name="scriptSetClipPan">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="pan" type="d" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetClipPan">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="pan" type="d" direction="out"/>
+    </method>
     <method name="scriptSetTrackMute">
       <arg name="trackId" type="i" direction="in"/>
       <arg name="mute" type="b" direction="in"/>
@@ -273,6 +490,53 @@
       <arg name="trackId" type="i" direction="in"/>
       <arg name="mute" type="b" direction="out"/>
     </method>
+    <method name="scriptSetTrackLocked">
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="locked" type="b" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetTrackLocked">
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="locked" type="b" direction="out"/>
+    </method>
+    <method name="scriptSetTrackHidden">
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="hidden" type="b" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetTrackHidden">
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="hidden" type="b" direction="out"/>
+    </method>
+    <!-- Track Properties -->
+    <method name="scriptGetTrackName">
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="name" type="s" direction="out"/>
+    </method>
+    <method name="scriptSetTrackName">
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="name" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetTrackColor">
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="color" type="i" direction="out"/>
+    </method>
+    <method name="scriptSetTrackColor">
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="color" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetTrackSolo">
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="solo" type="b" direction="out"/>
+    </method>
+    <method name="scriptSetTrackSolo">
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="solo" type="b" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
     <method name="scriptGetAudioLevels">
       <arg name="binId" type="s" direction="in"/>
       <arg name="stream" type="i" direction="in"/>
@@ -335,10 +599,73 @@
     </method>
     <method name="scriptPlay"/>
     <method name="scriptPause"/>
+    <method name="scriptSetPlaybackSpeed">
+      <arg name="speed" type="d" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetPlaybackSpeed">
+      <arg name="speed" type="d" direction="out"/>
+    </method>
+
+    <!-- Timeline Navigation -->
+    <method name="scriptGoToNextMarker">
+      <arg name="frame" type="i" direction="out"/>
+    </method>
+    <method name="scriptGoToPreviousMarker">
+      <arg name="frame" type="i" direction="out"/>
+    </method>
+    <method name="scriptGoToNextEdit">
+      <arg name="frame" type="i" direction="out"/>
+    </method>
+    <method name="scriptGoToPreviousEdit">
+      <arg name="frame" type="i" direction="out"/>
+    </method>
+
+    <!-- Project Profile -->
+    <method name="scriptSetProjectProfile">
+      <arg name="width" type="i" direction="in"/>
+      <arg name="height" type="i" direction="in"/>
+      <arg name="fpsNum" type="i" direction="in"/>
+      <arg name="fpsDen" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Copy/Cut/Paste -->
+    <method name="scriptCopyClips">
+      <arg name="clipId" type="i" direction="out"/>
+    </method>
+    <method name="scriptCutClips">
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptPasteClips">
+      <arg name="position" type="i" direction="in"/>
+      <arg name="trackId" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
 
     <!-- Render -->
     <method name="scriptRender">
       <arg name="url" type="s" direction="in"/>
+    </method>
+    <method name="scriptRenderWithParams">
+      <arg name="outputFile" type="s" direction="in"/>
+      <arg name="presetName" type="s" direction="in"/>
+      <arg name="inFrame" type="i" direction="in"/>
+      <arg name="outFrame" type="i" direction="in"/>
+      <arg name="paramKeys" type="as" direction="in"/>
+      <arg name="paramValues" type="as" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptGetRenderPresets">
+      <arg name="presets" type="as" direction="out"/>
+    </method>
+    <method name="scriptGetRenderJobs">
+      <arg name="jobs" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
+    </method>
+    <method name="scriptAbortRenderJob">
+      <arg name="outputPath" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
     </method>
 
     <!-- Groups -->
@@ -418,7 +745,39 @@
       <arg name="success" type="b" direction="out"/>
     </method>
 
+    <!-- Effect Keyframes by parameter name -->
+    <method name="scriptGetEffectKeyframesByParam">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="effectId" type="s" direction="in"/>
+      <arg name="paramName" type="s" direction="in"/>
+      <arg name="keyframes" type="av" direction="out"/>
+      <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
+    </method>
+    <method name="scriptAddEffectKeyframeByParam">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="effectId" type="s" direction="in"/>
+      <arg name="paramName" type="s" direction="in"/>
+      <arg name="frame" type="i" direction="in"/>
+      <arg name="value" type="s" direction="in"/>
+      <arg name="keyframeType" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptRemoveEffectKeyframeByParam">
+      <arg name="clipId" type="i" direction="in"/>
+      <arg name="effectId" type="s" direction="in"/>
+      <arg name="paramName" type="s" direction="in"/>
+      <arg name="frame" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
     <!-- Sequences (multi-timeline) -->
+    <method name="scriptCreateSequence">
+      <arg name="name" type="s" direction="in"/>
+      <arg name="audioTracks" type="i" direction="in"/>
+      <arg name="videoTracks" type="i" direction="in"/>
+      <arg name="parentFolder" type="s" direction="in"/>
+      <arg name="binId" type="s" direction="out"/>
+    </method>
     <method name="scriptGetSequences">
       <arg name="sequences" type="av" direction="out"/>
       <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantList"/>
@@ -511,6 +870,11 @@
       <arg name="outputPath" type="s" direction="in"/>
       <arg name="result" type="s" direction="out"/>
     </method>
+    <method name="scriptCaptureWindow">
+      <arg name="maxSize" type="i" direction="in"/>
+      <arg name="outputPath" type="s" direction="in"/>
+      <arg name="result" type="s" direction="out"/>
+    </method>
 
     <!-- Subtitles -->
     <method name="scriptGetSubtitles">
@@ -527,6 +891,23 @@
     <method name="scriptEditSubtitle">
       <arg name="subtitleId" type="i" direction="in"/>
       <arg name="newText" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptMoveSubtitle">
+      <arg name="subtitleId" type="i" direction="in"/>
+      <arg name="newStartFrame" type="i" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptResizeSubtitle">
+      <arg name="subtitleId" type="i" direction="in"/>
+      <arg name="newDuration" type="i" direction="in"/>
+      <arg name="fromRight" type="b" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="scriptImportSubtitle">
+      <arg name="filePath" type="s" direction="in"/>
+      <arg name="offset" type="i" direction="in"/>
+      <arg name="encoding" type="s" direction="in"/>
       <arg name="success" type="b" direction="out"/>
     </method>
     <method name="scriptDeleteSubtitle">
@@ -559,6 +940,11 @@
     <method name="scriptSetSubtitleStyleName">
       <arg name="subtitleId" type="i" direction="in"/>
       <arg name="styleName" type="s" direction="in"/>
+      <arg name="success" type="b" direction="out"/>
+    </method>
+
+    <!-- Speech Recognition -->
+    <method name="scriptSpeechRecognition">
       <arg name="success" type="b" direction="out"/>
     </method>
 

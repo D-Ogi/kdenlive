@@ -97,6 +97,7 @@ public:
     void updateDocumentPath();
     int waitingJobsCount() const;
     int runningJobsCount() const;
+    QVariantList getJobsList() const;
     QString getFreeScriptName(const QUrl &projectName = QUrl(), const QString &prefix = QString());
     bool startWaitingRenderJobs();
     /** @brief Show / hide proxy settings. */

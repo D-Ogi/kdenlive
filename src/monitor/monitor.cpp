@@ -3241,8 +3241,10 @@ void Monitor::addControlStroke(const QVariant &pointsVariant, bool isExclude)
     const QVariantList points = pointsVariant.toList();
     QSize fSize = pCore->getCurrentFrameDisplaySize();
     int pos = position();
-    // Sample the stroke path at regular intervals (~15px apart) and convert to pixel coordinates
-    const double sampleDistance = 15.0;
+    // Sample the stroke path at regular intervals (~50px apart) and convert to pixel coordinates.
+    // SAM2 performs best with fewer, well-spaced points (it was trained on sparse clicks).
+    // Dense 15px sampling overwhelms the prompt encoder and produces fragmented masks.
+    const double sampleDistance = 50.0;
     QList<QPoint> sampledPoints;
     double accumulatedDist = 0;
     double prevPx = -1, prevPy = -1;

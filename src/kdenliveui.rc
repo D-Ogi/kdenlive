@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <!DOCTYPE kpartgui SYSTEM "kpartgui.dtd">
-<kpartgui name="kdenlive" version="242" translationDomain="kdenlive">
+<kpartgui name="kdenlive" version="243" translationDomain="kdenlive">
   <MenuBar>
     <Menu name="file">
       <Action name="file_new"/>
@@ -16,6 +16,8 @@
       <Action name="project_render"/>
       <Action name="import_project"/>
       <Action name="export_project"/>
+      <Separator/>
+      <Action name="import_ae_preset"/>
       <Separator/>
       <Action name="open_backup"/>
       <Action name="project_settings"/>

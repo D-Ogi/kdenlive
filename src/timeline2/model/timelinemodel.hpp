@@ -108,6 +108,7 @@ public:
     friend class TimeRemap;
     friend struct TimelineFunctions;
     friend class KdenliveTests;
+    friend class MainWindow;
     friend class OtioExport;
     friend class OtioImport;
 

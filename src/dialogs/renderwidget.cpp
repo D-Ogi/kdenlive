@@ -1212,6 +1212,28 @@ int RenderWidget::runningJobsCount() const
     return count;
 }
 
+QVariantList RenderWidget::getJobsList() const
+{
+    static const QStringList statusNames = {
+        QStringLiteral("waiting"), QStringLiteral("starting"),
+        QStringLiteral("running"), QStringLiteral("finished"),
+        QStringLiteral("failed"), QStringLiteral("aborted")
+    };
+    QVariantList result;
+    auto *item = static_cast<RenderJobItem *>(m_view.running_jobs->topLevelItem(0));
+    while (item != nullptr) {
+        QVariantMap job;
+        job[QStringLiteral("path")] = item->text(1);
+        int st = item->status();
+        job[QStringLiteral("status")] = (st >= 0 && st < statusNames.size()) ? statusNames[st] : QString::number(st);
+        job[QStringLiteral("progress")] = item->data(1, ProgressRole).toInt();
+        job[QStringLiteral("frame")] = item->data(1, LastFrameRole).toInt();
+        result.append(job);
+        item = static_cast<RenderJobItem *>(m_view.running_jobs->itemBelow(item));
+    }
+    return result;
+}
+
 void RenderWidget::adjustViewToProfile()
 {
     m_view.rescale_width->setValue(KdenliveSettings::defaultrescalewidth());

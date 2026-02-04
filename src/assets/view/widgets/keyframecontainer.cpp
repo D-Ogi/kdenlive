@@ -48,6 +48,7 @@
 #include <QLabel>
 #include <QMenu>
 #include <QPointer>
+#include <QScreen>
 #include <QStackedWidget>
 #include <QStyle>
 #include <QTabBar>
@@ -931,8 +932,9 @@ void KeyframeContainer::addParameter(const QPersistentModelIndex &index)
         }
 
         if (targetLayout) {
-            if (labelWidget && !groupName.isEmpty()) {
-                // For grouped (shader) params: wrap label + fx button in a container
+            bool isShaderParam = paramName.startsWith(QLatin1String("shader_param."));
+            if (labelWidget && (isShaderParam || !groupName.isEmpty())) {
+                // For shader params: wrap label + fx button in a container
                 auto *labelContainer = new QWidget(m_parent);
                 auto *labelLayout = new QHBoxLayout(labelContainer);
                 labelLayout->setContentsMargins(0, 0, 0, 0);
@@ -987,8 +989,27 @@ void KeyframeContainer::addParameter(const QPersistentModelIndex &index)
                         }
                     });
 
-                    // Position popup below the fx button
+                    // Position popup below the fx button, clamped to screen
+                    popup->adjustSize();
                     QPoint pos = fxButton->mapToGlobal(QPoint(0, fxButton->height()));
+                    QScreen *screen = fxButton->screen();
+                    if (screen) {
+                        QRect avail = screen->availableGeometry();
+                        QSize sz = popup->sizeHint();
+                        if (pos.x() + sz.width() > avail.right()) {
+                            pos.setX(avail.right() - sz.width());
+                        }
+                        if (pos.y() + sz.height() > avail.bottom()) {
+                            // Show above the button instead
+                            pos.setY(fxButton->mapToGlobal(QPoint(0, 0)).y() - sz.height());
+                        }
+                        if (pos.x() < avail.left()) {
+                            pos.setX(avail.left());
+                        }
+                        if (pos.y() < avail.top()) {
+                            pos.setY(avail.top());
+                        }
+                    }
                     popup->move(pos);
                     popup->show();
                     popup->setFocus();

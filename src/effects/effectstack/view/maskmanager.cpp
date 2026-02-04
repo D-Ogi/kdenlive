@@ -237,6 +237,8 @@ bool MaskManager::initMaskMode(bool autoAdd, bool editMode)
         connect(clipMon, &Monitor::disablePreviewMask, this, &MaskManager::abortPreviewByMonitor, Qt::UniqueConnection);
         connect(pCore->getMonitor(Kdenlive::ClipMonitor)->getControllerProxy(), &MonitorProxy::positionChanged, m_maskHelper, &AutomaskHelper::monitorSeek,
                 Qt::UniqueConnection);
+        connect(pCore->getMonitor(Kdenlive::ClipMonitor)->getControllerProxy(), &MonitorProxy::maskOverlayModeChanged, m_maskHelper,
+                &AutomaskHelper::updateMaskParams, Qt::UniqueConnection);
         m_connected = true;
     }
     clipMon->abortPreviewMask();
@@ -670,6 +672,8 @@ void MaskManager::disconnectMonitor()
         disconnect(clipMon, &Monitor::maskRedoAction, this, &MaskManager::redoMaskAction);
         disconnect(clipMon, &Monitor::disablePreviewMask, this, &MaskManager::abortPreviewByMonitor);
         disconnect(pCore->getMonitor(Kdenlive::ClipMonitor)->getControllerProxy(), &MonitorProxy::positionChanged, m_maskHelper, &AutomaskHelper::monitorSeek);
+        disconnect(pCore->getMonitor(Kdenlive::ClipMonitor)->getControllerProxy(), &MonitorProxy::maskOverlayModeChanged, m_maskHelper,
+                   &AutomaskHelper::updateMaskParams);
         m_connected = false;
     }
 }

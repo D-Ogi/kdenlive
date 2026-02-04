@@ -5,6 +5,8 @@
 
 #include "assetparametermodel.hpp"
 #include "assets/keyframes/model/keyframemodellist.hpp"
+#include <QFile>
+#include <QTextStream>
 #include "assets/shaderparamparser.h"
 #include "bin/model/markerlistmodel.hpp"
 #include "bin/projectclip.h"
@@ -249,10 +251,73 @@ AssetParameterModel::AssetParameterModel(std::unique_ptr<Mlt::Properties> asset,
     }
 
     qDebug() << "END parsing of " << assetId << ". Number of found parameters" << m_rows.size();
+
+    // Deferred shader param rebuild for placebo.shader.
+    // Cannot use shared_from_this() here — object is not yet managed by shared_ptr.
+    if (m_assetId == QLatin1String("placebo.shader")) {
+        if (m_asset->property_exists("kdenlive:shader_text_full")) {
+            // Project load: restore from persisted full text
+            const QString fullText = QString::fromUtf8(m_asset->get("kdenlive:shader_text_full"));
+            if (!fullText.isEmpty()) {
+                m_pendingShaderText = fullText;
+            }
+        } else {
+            // New effect with shader_path (e.g. from D-Bus scriptAddClipEffect):
+            // need to import file, parse //!PARAM, and inject slider parameters.
+            const char *path = m_asset->get("shader_path");
+            if (path && *path) {
+                m_pendingShaderPath = QString::fromUtf8(path);
+            }
+        }
+    }
 }
 
 void AssetParameterModel::prepareKeyframes(int in, int out)
 {
+    // Deferred shader param rebuild.
+    // Constructor may have stored pending data, OR params were applied after
+    // construction but before this call (e.g. doAppendEffect sets params on
+    // the MLT filter between construct() and prepareKeyframes()).
+    // Skip if shader_param.* entries already exist in the model —
+    // a previous prepareKeyframes / rebuildFromXml already built them.
+    // Re-running would reset the model mid-view construction (causing empty UI).
+    bool shaderParamsAlreadyLoaded = false;
+    if (m_assetId == QLatin1String("placebo.shader")) {
+        for (const auto &row : m_rows) {
+            if (row.startsWith(QLatin1String("shader_param."))) {
+                shaderParamsAlreadyLoaded = true;
+                break;
+            }
+        }
+    }
+
+    if (!m_pendingShaderText.isEmpty()) {
+        const QString text = m_pendingShaderText;
+        m_pendingShaderText.clear();
+        if (!shaderParamsAlreadyLoaded) {
+            updateShaderParamsFromText(text);
+        }
+    } else if (!m_pendingShaderPath.isEmpty()) {
+        const QString path = m_pendingShaderPath;
+        m_pendingShaderPath.clear();
+        if (!shaderParamsAlreadyLoaded) {
+            updateShaderParams(path);
+        }
+    } else if (m_assetId == QLatin1String("placebo.shader") && m_asset && !shaderParamsAlreadyLoaded) {
+        // Check MLT filter directly — params may have been set after constructor
+        if (m_asset->property_exists("kdenlive:shader_text_full")) {
+            const QString fullText = QString::fromUtf8(m_asset->get("kdenlive:shader_text_full"));
+            if (!fullText.isEmpty()) {
+                updateShaderParamsFromText(fullText);
+            }
+        } else {
+            const char *path = m_asset->get("shader_path");
+            if (path && *path) {
+                updateShaderParams(QString::fromUtf8(path));
+            }
+        }
+    }
+
     if (m_keyframes) return;
     int ix = 0;
     for (const auto &name : std::as_const(m_rows)) {
@@ -600,6 +665,58 @@ void AssetParameterModel::setParameter(const QString &name, const QString &param
     if (!paramIndex.isValid()) {
         paramIndex = index(m_rows.indexOf(name), 0);
     }
+
+    // Auto-update expressionBaseValue when slider changes with active expression.
+    // When a param has a baked expression, slider changes should update 'value'
+    // (expressionBaseValue) and re-bake rather than overwriting the baked animation.
+    auto exprIt = m_params.find(name);
+    if (exprIt != m_params.end() && !exprIt->second.expression.isEmpty()
+        && exprIt->second.type == ParamType::KeyframeParam) {
+        // Parse the incoming animation to extract the user's intended value
+        // at the current playhead position
+        Mlt::Properties temp;
+        temp.set("key", paramValue.toUtf8().constData());
+
+        int clipIn = m_asset->get_int("in");
+        if (clipIn <= 0) clipIn = pCore->getItemIn(m_ownerId);
+        int clipOut = m_asset->get_int("out");
+        int duration = std::max(1, clipOut - clipIn);
+
+        // Force animation parsing
+        (void)temp.anim_get_double("key", 0, duration);
+
+        int monitorPos = pCore->getMonitorPosition();
+        int relFrame = std::max(0, monitorPos - clipIn);
+        if (relFrame > duration) relFrame = duration;
+
+        double newBase = temp.anim_get_double("key", relFrame, duration);
+        double oldBase = exprIt->second.expressionBaseValue.isValid()
+                             ? exprIt->second.expressionBaseValue.toDouble()
+                             : 0.0;
+
+        if (qAbs(newBase - oldBase) > 1e-9) {
+            // setExpressionBaseValue re-bakes and writes to MLT
+            setExpressionBaseValue(name, newBase);
+        }
+        // Skip internalSetParameter — the re-bake wrote the correct animation to MLT.
+        // The bake path already calls refreshProjectItem + invalidateItem.
+        return;
+    }
+
+    // Detect shader changes for placebo.shader dynamic param injection.
+    // Must intercept BEFORE internalSetParameter to avoid double-writing
+    // shader_text to MLT (which would trigger two reparse cycles in libplacebo).
+    if (m_assetId == QLatin1String("placebo.shader")) {
+        if (name == QLatin1String("shader_path")) {
+            updateShaderParams(paramValue);
+            return;
+        }
+        if (name == QLatin1String("shader_text")) {
+            updateShaderParamsFromText(paramValue);
+            return;
+        }
+    }
+
     internalSetParameter(name, paramValue, paramIndex);
     QStringList paramName = {name};
     if (m_builtIn && !groupedCommand) {
@@ -638,12 +755,6 @@ void AssetParameterModel::setParameter(const QString &name, const QString &param
     }
     if (updateChildRequired) {
         Q_EMIT updateChildren({paramName});
-    }
-    // Detect shader path changes for placebo.shader dynamic param injection
-    if (m_assetId == QLatin1String("placebo.shader") && name == QLatin1String("shader_path")) {
-        // Must return immediately after rebuild — paramIndex and m_rows are invalidated
-        updateShaderParams(paramValue);
-        return;
     }
 
     // Update timeline view if necessary
@@ -1924,13 +2035,12 @@ void AssetParameterModel::rebuildFromXml(const QDomElement &newXml)
     }
 
     endResetModel();
-    qDebug() << "rebuildFromXml: rebuilt with" << m_rows.size() << "parameters";
 }
 
 void AssetParameterModel::updateShaderParams(const QString &shaderPath)
 {
-    // Only applicable to placebo.shader effects
-    if (m_assetId != QLatin1String("placebo.shader")) {
+    // Only applicable to placebo.shader effects with a valid path
+    if (m_assetId != QLatin1String("placebo.shader") || shaderPath.isEmpty()) {
         return;
     }
     if (!m_asset || !m_asset->is_valid()) {
@@ -1998,12 +2108,124 @@ void AssetParameterModel::updateShaderParams(const QString &shaderPath)
     // but ParamRow.expression is cleared by rebuildFromXml — rehydrate here.
     restoreExpressionsFromFilter();
 
-    qDebug() << "updateShaderParams: injected" << shaderParams.size() << "params from" << shaderPath;
-
     // Defer the view rebuild to the next event loop iteration.
     // This is critical: the call chain is UrlParamWidget::valueChanged → commitChanges
     // → setParameter → updateShaderParams. Emitting rebuildEffect synchronously would
     // destroy the UrlParamWidget while it's still in its own signal handler, causing a crash.
+    const QString importPath = shaderPath;
+    QTimer::singleShot(0, this, [self = shared_from_this(), importPath]() {
+        if (!importPath.isEmpty()) {
+            // Clear shader_text on MLT — rebuildFromXml may have set it via
+            // internalSetParameter with a default/empty value, which triggers
+            // libplacebo's "Failed to parse inline shader_text" error.
+            // Rendering uses shader_path; shader_text must be empty on MLT.
+            self->m_asset->set("shader_text", "");
+
+            QFile file(importPath);
+            if (file.open(QIODevice::ReadOnly)) {
+                const QByteArray raw = file.readAll();
+                file.close();
+                const QString content = QString::fromUtf8(raw);
+                // Persist full text for save/reload and editor
+                self->m_asset->set("kdenlive:shader_text_full", content.toUtf8().constData());
+                // Keep full text in m_params for the shader editor UI.
+                self->m_params[QStringLiteral("shader_text")].value = content;
+            }
+        }
+
+        Q_EMIT self->rebuildEffect(self);
+        Q_EMIT self->modelChanged();
+
+        if (!self->m_isAudio) {
+            pCore->refreshProjectItem(self->m_ownerId);
+            pCore->invalidateItem(self->m_ownerId);
+        }
+    });
+}
+
+void AssetParameterModel::updateShaderParamsFromText(const QString &shaderText)
+{
+    if (m_assetId != QLatin1String("placebo.shader") || shaderText.isEmpty()) {
+        return;
+    }
+    if (!m_asset || !m_asset->is_valid()) {
+        return;
+    }
+
+    QVector<ShaderParamInfo> shaderParams = ShaderParamParser::parse(shaderText);
+
+    // Persist the full text (with //!PARAM) in a Kdenlive-specific property
+    // so it survives save/reload and rebuildFromXml.
+    m_asset->set("kdenlive:shader_text_full", shaderText.toUtf8().constData());
+
+    // Only set shader_text on MLT if no shader_path is available for rendering.
+    // libplacebo's inline shader_text parsing has issues with //!PARAM blocks,
+    // but file-based shader_path works correctly.
+    const char *existingPath = m_asset->get("shader_path");
+    if (!existingPath || !*existingPath) {
+        m_asset->set("shader_text", shaderText.toUtf8().constData());
+    }
+
+    QDomElement baseXml;
+    if (EffectsRepository::get()->exists(m_assetId)) {
+        baseXml = EffectsRepository::get()->getXml(m_assetId);
+    }
+    if (baseXml.isNull()) {
+        return;
+    }
+
+    // Remove existing shader_param.* from base XML
+    QDomNodeList existingParams = baseXml.elementsByTagName(QStringLiteral("parameter"));
+    QList<QDomElement> toRemove;
+    for (int i = 0; i < existingParams.count(); ++i) {
+        QDomElement el = existingParams.item(i).toElement();
+        if (el.attribute(QStringLiteral("name")).startsWith(QLatin1String("shader_param."))) {
+            toRemove.append(el);
+        }
+    }
+    for (const QDomElement &el : toRemove) {
+        baseXml.removeChild(el);
+    }
+
+    // Inject new shader_param.* parameters
+    QDomDocument doc = baseXml.ownerDocument();
+    for (const ShaderParamInfo &param : shaderParams) {
+        QDomElement paramEl = ShaderParamParser::toParameterElement(doc, param);
+        baseXml.appendChild(paramEl);
+    }
+
+    rebuildFromXml(baseXml);
+
+    // rebuildFromXml may have set shader_text on MLT via internalSetParameter.
+    // When shader_path is present, clear shader_text to avoid libplacebo
+    // "Failed to parse inline shader_text" errors.
+    const char *existingPathAfterRebuild = m_asset->get("shader_path");
+    if (existingPathAfterRebuild && *existingPathAfterRebuild) {
+        m_asset->set("shader_text", "");
+    }
+
+    // Restore the full shader text in m_params for the editor.
+    // rebuildFromXml re-reads from m_asset; ensure m_params has the same text.
+    if (m_params.count(QStringLiteral("shader_text")) > 0) {
+        m_params[QStringLiteral("shader_text")].value = shaderText;
+    }
+
+    // Restore shader_param.* values from MLT
+    QStringList shaderParamKeys;
+    for (const auto &row : m_params) {
+        if (row.first.startsWith(QLatin1String("shader_param."))) {
+            shaderParamKeys.append(row.first);
+        }
+    }
+    for (const QString &key : std::as_const(shaderParamKeys)) {
+        const char *mltVal = m_asset->get(key.toUtf8().constData());
+        if (mltVal && strlen(mltVal) > 0) {
+            m_params[key].value = QString::fromUtf8(mltVal);
+        }
+    }
+
+    restoreExpressionsFromFilter();
+
     QTimer::singleShot(0, this, [self = shared_from_this()]() {
         Q_EMIT self->rebuildEffect(self);
         Q_EMIT self->modelChanged();
@@ -2141,16 +2363,38 @@ void AssetParameterModel::setExpression(const QString &paramName, const QString 
                 // For roto-spline, snapshot the current spline JSON
                 it->second.expressionBaseValue = QString::fromUtf8(m_asset->get("spline"));
             } else if (it->second.type == ParamType::KeyframeParam) {
-                // For animated/keyframe params, m_params[name].value may only hold
-                // the XML default (e.g. 0) because slider updates go through KeyframeModel.
-                // Read the actual current value from the MLT animation property.
+                // For animated/keyframe params, read from KeyframeModel (authoritative),
+                // then fall back to MLT animation, plain double, and model cache.
                 int snapIn = m_asset->get_int("in");
                 if (snapIn <= 0) snapIn = pCore->getItemIn(m_ownerId);
-                double animVal = m_asset->anim_get_double(paramName.toUtf8().constData(), snapIn, -1);
-                it->second.expressionBaseValue = animVal;
+                double snapshotVal = 0.0;
+                if (m_keyframes) {
+                    QModelIndex paramIdx = index(m_rows.indexOf(paramName), 0);
+                    if (paramIdx.isValid()) {
+                        snapshotVal = m_keyframes->getInterpolatedValue(snapIn, QPersistentModelIndex(paramIdx)).toDouble();
+                    }
+                }
+                if (snapshotVal == 0.0) {
+                    double animVal = m_asset->anim_get_double(paramName.toUtf8().constData(), snapIn, -1);
+                    if (animVal != 0.0) {
+                        snapshotVal = animVal;
+                    } else {
+                        double staticVal = m_asset->get_double(paramName.toUtf8().constData());
+                        if (staticVal != 0.0) {
+                            snapshotVal = staticVal;
+                        } else {
+                            snapshotVal = it->second.value.toDouble();
+                        }
+                    }
+                }
+                it->second.expressionBaseValue = snapshotVal;
             } else {
                 it->second.expressionBaseValue = it->second.value;
             }
+            // Persist base value to MLT so it survives rebuildFromXml()
+            QString baseProp = QStringLiteral("kdenlive:exprbase.%1").arg(paramName);
+            m_asset->set(baseProp.toUtf8().constData(),
+                         QString::number(it->second.expressionBaseValue.toDouble(), 'g', 15).toUtf8().constData());
         }
 
         int in = m_asset->get_int("in");
@@ -2595,12 +2839,23 @@ double AssetParameterModel::getExpressionBaseValue(const QString &paramName) con
     if (it->second.expressionBaseValue.isValid()) {
         return it->second.expressionBaseValue.toDouble();
     }
-    // For animated/keyframe params, m_params[name].value may only hold the XML default.
-    // Read the actual current value from the MLT animation property.
+    // For animated/keyframe params, read from KeyframeModel (authoritative slider state).
     if (it->second.type == ParamType::KeyframeParam) {
         int in = m_asset->get_int("in");
         if (in <= 0) in = pCore->getItemIn(m_ownerId);
-        return m_asset->anim_get_double(paramName.toUtf8().constData(), in, -1);
+        if (m_keyframes) {
+            QModelIndex paramIdx = index(m_rows.indexOf(paramName), 0);
+            if (paramIdx.isValid()) {
+                double kfVal = m_keyframes->getInterpolatedValue(in, QPersistentModelIndex(paramIdx)).toDouble();
+                if (kfVal != 0.0) return kfVal;
+            }
+        }
+        // Fallback to MLT / model cache
+        double animVal = m_asset->anim_get_double(paramName.toUtf8().constData(), in, -1);
+        if (animVal != 0.0) return animVal;
+        double staticVal = m_asset->get_double(paramName.toUtf8().constData());
+        if (staticVal != 0.0) return staticVal;
+        return it->second.value.toDouble();
     }
     return it->second.value.toDouble();
 }
@@ -2684,6 +2939,13 @@ void AssetParameterModel::restoreExpressionsFromFilter()
         QByteArray rectBackupKey = QStringLiteral("kdenlive:exprbase.%1.-1").arg(paramName).toUtf8();
         if (m_asset->property_exists(rectBackupKey.constData())) {
             it->second.componentExpressionBaseValues[-1] = QString::fromUtf8(m_asset->get(rectBackupKey.constData()));
+        }
+
+        // Notify UI so the [fx] icon reflects the active expression state
+        int row = static_cast<int>(std::distance(m_rows.begin(), std::find(m_rows.begin(), m_rows.end(), paramName)));
+        if (row >= 0 && row < static_cast<int>(m_rows.size())) {
+            QModelIndex idx = index(row, 0);
+            Q_EMIT dataChanged(idx, idx, {ExpressionRole, ExpressionActiveRole, ExpressionBaseValueRole});
         }
     }
 }

@@ -97,6 +97,18 @@ QString ShaderEditorWidget::shaderPath() const
 
 void ShaderEditorWidget::loadFromFile()
 {
+    // Primary source: shader_text from m_params (contains full text with //!PARAM blocks)
+    QModelIndex textIndex = m_model->getParamIndexFromName(QStringLiteral("shader_text"));
+    if (textIndex.isValid()) {
+        const QString text = m_model->data(textIndex, AssetParameterModel::ValueRole).toString();
+        if (!text.isEmpty()) {
+            m_editor->setPlainText(text);
+            m_applyButton->setEnabled(true);
+            return;
+        }
+    }
+
+    // Fallback: read from shader_path file (before import runs)
     const QString path = shaderPath();
     if (path.isEmpty()) {
         m_editor->setPlainText(QStringLiteral("// No shader file selected.\n// Select a .hook or .glsl file above."));
@@ -119,26 +131,8 @@ void ShaderEditorWidget::loadFromFile()
 
 void ShaderEditorWidget::applyChanges()
 {
-    const QString path = shaderPath();
-    if (path.isEmpty()) {
-        return;
-    }
-
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-        qWarning() << "ShaderEditorWidget: cannot write to" << path;
-        return;
-    }
-
-    QTextStream stream(&file);
-    stream << m_editor->toPlainText();
-    file.close();
-
-    // Trigger param re-parse: the model will detect the shader content changed
-    // via updateShaderParams when we re-set the shader_path value
-    m_model->setParameter(QStringLiteral("shader_path"), path, true);
-
-    qDebug() << "ShaderEditorWidget: saved and re-triggered shader_path for" << path;
+    const QString content = m_editor->toPlainText();
+    m_model->setParameter(QStringLiteral("shader_text"), content, true);
 }
 
 void ShaderEditorWidget::revertChanges()
