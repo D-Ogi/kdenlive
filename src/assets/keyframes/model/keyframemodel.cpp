@@ -1261,10 +1261,17 @@ QVariant KeyframeModel::getNormalizedValue(double newVal) const
 
 QVariant KeyframeModel::getInterpolatedValue(const GenTime &pos) const
 {
-    if (m_keyframeList.count(pos) > 0) {
+    // When an expression is active, the MLT filter holds the baked animation
+    // which differs from m_keyframeList (still has the pre-expression values).
+    // Skip the keyframeList shortcut and fall through to the MLT animation path.
+    bool hasExpression = false;
+    if (auto ptr = m_model.lock()) {
+        hasExpression = ptr->data(m_index, AssetParameterModel::ExpressionActiveRole).toBool();
+    }
+    if (!hasExpression && m_keyframeList.count(pos) > 0) {
         return m_keyframeList.at(pos).second;
     }
-    if (m_keyframeList.size() == 0) {
+    if (!hasExpression && m_keyframeList.size() == 0) {
         return QVariant();
     }
     if (m_paramType == ParamType::Roto_spline) {
